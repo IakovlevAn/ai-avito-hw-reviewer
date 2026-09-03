@@ -1,4 +1,5 @@
-import React, { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import React, { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -127,8 +128,92 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function InfoTip({ text }: { text: string }) {
+  const id = React.useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [position, setPosition] = useState({ top: -1000, left: -1000, arrowLeft: 20, placement: "top" });
+
+  const updatePosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    const tooltip = tooltipRef.current;
+    if (!trigger || !tooltip) return;
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const margin = 12;
+    const gap = 10;
+    const centeredLeft = triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2;
+    const left = Math.max(margin, Math.min(centeredLeft, window.innerWidth - tooltipRect.width - margin));
+    const above = triggerRect.top - tooltipRect.height - gap;
+    const placement = above >= margin ? "top" : "bottom";
+    const top = placement === "top" ? above : triggerRect.bottom + gap;
+    const arrowLeft = Math.max(
+      14,
+      Math.min(triggerRect.left + triggerRect.width / 2 - left, tooltipRect.width - 14)
+    );
+    setPosition({ top, left, arrowLeft, placement });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (visible) updatePosition();
+  }, [text, updatePosition, visible]);
+
+  useEffect(() => {
+    if (!visible) return;
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [updatePosition, visible]);
+
   return (
-    <span className="info-tip" tabIndex={0} data-tooltip={text} aria-label={text}>?</span>
+    <span
+      className="info-tip-anchor"
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => {
+        if (document.activeElement !== triggerRef.current) setVisible(false);
+      }}
+    >
+      <button
+        ref={triggerRef}
+        className="info-tip"
+        type="button"
+        aria-label={text}
+        aria-describedby={visible ? id : undefined}
+        aria-expanded={visible}
+        onFocus={() => setVisible(true)}
+        onBlur={() => setVisible(false)}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setVisible(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setVisible(false);
+        }}
+      >
+        ?
+      </button>
+      {visible && createPortal(
+        <div
+          ref={tooltipRef}
+          id={id}
+          role="tooltip"
+          className={`tooltip-popover tooltip-${position.placement}`}
+          style={{
+            top: position.top,
+            left: position.left,
+            "--tooltip-arrow-left": `${position.arrowLeft}px`
+          } as React.CSSProperties}
+        >
+          {text}
+        </div>,
+        document.body
+      )}
+    </span>
   );
 }
 
