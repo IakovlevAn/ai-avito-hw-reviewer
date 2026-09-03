@@ -147,6 +147,7 @@ async def process_submission(submission_id: int) -> None:
             submission.branch = snapshot.branch
             submission.commit_sha = snapshot.commit_sha
             submission.criteria.clear()
+            session.flush()
             for position, finding in enumerate(findings, start=1):
                 submission.criteria.append(
                     CriterionResult(

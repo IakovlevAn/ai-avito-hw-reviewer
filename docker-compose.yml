@@ -6,6 +6,12 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      YANDEX_GPT_ENABLED: "${YANDEX_GPT_ENABLED:-false}"
+      YANDEX_GPT_FOLDER_ID: "${YANDEX_GPT_FOLDER_ID:-}"
+      YANDEX_GPT_MODEL: "${YANDEX_GPT_MODEL:-yandexgpt-lite}"
+      YANDEX_GPT_CRITIC_MODEL: "${YANDEX_GPT_CRITIC_MODEL:-yandexgpt}"
+      YANDEX_CLOUD_IAM_TOKEN: "${YANDEX_CLOUD_IAM_TOKEN:-}"
     volumes:
       - reviewer-data:/app/data
 

@@ -63,6 +63,15 @@ type Submission = {
     body: string;
     created_at: string;
   }>;
+  model_runs: Array<{
+    provider: string;
+    model: string;
+    status: string;
+    prompt_tokens: number | null;
+    completion_tokens: number | null;
+    error_type: string | null;
+    created_at: string;
+  }>;
   execution_check: {
     status: string;
     go_version: string | null;
@@ -284,6 +293,59 @@ function defaultCodePath(files: RepositoryFiles["files"]): string | null {
     ?? files.find((file) => file.path.endsWith(".go"))?.path
     ?? files[0]?.path
     ?? null;
+}
+
+type AiCodeSuggestion = {
+  id: string;
+  lineNumber: number;
+  title: string;
+  body: string;
+  confidence: number | null;
+};
+
+const criterionKeywords: Record<string, string[]> = {
+  "foundation.structure": ["package ", "func main"],
+  "foundation.http": ["http.server", "listenandserve", "serve("],
+  "foundation.env": ["port", "getenv", "env"],
+  "foundation.flag": ["flag", "port"],
+  "foundation.ping": ["/ping", "ping"],
+  "foundation.health": ["/healthcheck", "health"],
+  "foundation.shutdown": ["shutdown", "sigterm", "signal.notify"],
+  "data.postgres": ["postgres", "pgx", "database"],
+  "data.migrations": ["create table", "goose"],
+  "data.schema": ["couriers", "create table"],
+  "data.sql_safety": ["$1", "$2", "query"],
+  "architecture.handler_contract": ["interface"],
+  "architecture.repository_contract": ["interface"],
+  "architecture.di": ["func new", "newhandler", "newrepository"],
+  "architecture.wiring": ["func main", "new"]
+};
+
+function aiSuggestionsForFile(item: Submission, path: string, content: string): AiCodeSuggestion[] {
+  const lines = content.split("\n");
+  return item.criteria
+    .filter((criterion) => criterion.evidence.includes(path))
+    .map((criterion) => {
+      const keywords = criterionKeywords[criterion.code] ?? [];
+      const match = lines.findIndex((line) => keywords.some((keyword) => line.toLocaleLowerCase("ru-RU").includes(keyword)));
+      const fallback = lines.findIndex((line) => line.trim().length > 0);
+      const lineNumber = (match >= 0 ? match : Math.max(fallback, 0)) + 1;
+      const score = criterion.suggested_points === null
+        ? "балл оставлен ревьюеру"
+        : `${criterion.suggested_points} из ${criterion.max_points} баллов`;
+      return {
+        id: `${criterion.id}:${path}:${lineNumber}`,
+        lineNumber,
+        title: criterion.title,
+        body: `AI нашёл в этом фрагменте основание для критерия «${criterion.title}» и предложил ${score}.`,
+        confidence: criterion.confidence
+      };
+    });
+}
+
+function modelDisplayName(value: string): string {
+  const model = value.split("/").find((part) => part.startsWith("yandexgpt")) ?? value;
+  return model === "yandexgpt-lite" ? "YandexGPT Lite" : model === "yandexgpt" ? "YandexGPT" : model;
 }
 
 function App() {
@@ -776,6 +838,7 @@ function ReviewDetail({
   const [reviewTab, setReviewTab] = useState<"code" | "criteria">("code");
   const [requestedFile, setRequestedFile] = useState<string | null>(null);
   const sections = Array.from(new Set(item.criteria.map((criterion) => criterion.section)));
+  const unresolvedCriteria = item.criteria.filter((criterion) => criterion.final_points === null);
   const signalLabel = {
     low: "Низкий сигнал",
     medium: "Средний сигнал",
@@ -812,6 +875,12 @@ function ReviewDetail({
     }
   };
 
+  const focusNextUnresolved = () => {
+    const criterion = unresolvedCriteria[0];
+    if (!criterion) return;
+    document.getElementById(`criterion-${criterion.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
   return (
     <div className="review-page">
       <div className="review-heading">
@@ -842,6 +911,18 @@ function ReviewDetail({
         />
       </div>
       <div hidden={reviewTab !== "criteria"}>
+          <div className="ai-review-status">
+            <div>
+              <span>AI-предварительное ревью</span>
+              <strong>{item.criteria.length - unresolvedCriteria.length} из {item.criteria.length} критериев получили предложенный результат</strong>
+              <small>Предложения основаны на зафиксированной версии кода; итоговое решение остаётся за ревьюером.</small>
+            </div>
+            {unresolvedCriteria.length > 0 ? (
+              <button className="secondary" type="button" onClick={focusNextUnresolved}>Проверить без решения: {unresolvedCriteria.length}</button>
+            ) : (
+              <span className="status status-approved">Все критерии проверены</span>
+            )}
+          </div>
           <div className="responsibility-note">
             Результат не опубликован. Проверьте критерии без оценки, при необходимости измените предложенные баллы и подтвердите итог.
           </div>
@@ -865,6 +946,7 @@ function ReviewDetail({
           {item.criteria.filter((criterion) => criterion.section === section).map((criterion) => (
             <form
               className={`criterion-card criterion-${criterion.status}`}
+              id={`criterion-${criterion.id}`}
               key={criterion.id}
               onSubmit={(event) => {
                 event.preventDefault();
@@ -878,8 +960,8 @@ function ReviewDetail({
                 </div>
                 <p>{criterion.final_feedback || criterion.feedback}</p>
                 {criterion.evidence.length > 0 && (
-                  <details>
-                    <summary>Показать подтверждения</summary>
+                  <div className="criterion-evidence">
+                    <strong>Основания в коде</strong>
                     <ul className="evidence-list">
                       {criterion.evidence.map((evidence) => (
                         <li key={evidence}>
@@ -895,7 +977,7 @@ function ReviewDetail({
                         </li>
                       ))}
                     </ul>
-                  </details>
+                  </div>
                 )}
               </div>
               <div className="criterion-controls">
@@ -948,6 +1030,9 @@ function ReviewDetail({
 
       <div className="review-actions">
         <a className="secondary button-link" href={`/api/submissions/${item.id}/export.xlsx`}>Скачать Excel</a>
+        {item.unresolved_criteria > 0 && (
+          <span className="approval-blocker">Чтобы подтвердить результат, проверьте критерии без решения: {item.unresolved_criteria}.</span>
+        )}
         <button className="primary" type="button" onClick={approve} disabled={item.unresolved_criteria > 0 || item.status === "approved"}>
           {item.status === "approved" ? "Результат подтверждён" : "Подтвердить результат"}
         </button>
@@ -974,6 +1059,8 @@ function CodeReviewPanel({
   const [draftLine, setDraftLine] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  const [acceptingSuggestion, setAcceptingSuggestion] = useState<string | null>(null);
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -1018,6 +1105,9 @@ function CodeReviewPanel({
 
   const selectedFile = repository?.files.find((file) => file.path === selectedPath) ?? null;
   const comments = item.code_comments.filter((comment) => comment.file_path === selectedPath);
+  const suggestions = selectedFile
+    ? aiSuggestionsForFile(item, selectedFile.path, selectedFile.content).filter((suggestion) => !dismissedSuggestions.has(suggestion.id))
+    : [];
 
   const saveComment = async (event: FormEvent) => {
     event.preventDefault();
@@ -1038,6 +1128,27 @@ function CodeReviewPanel({
     }
   };
 
+  const acceptSuggestion = async (suggestion: AiCodeSuggestion) => {
+    if (!selectedPath) return;
+    setAcceptingSuggestion(suggestion.id);
+    try {
+      await request(`/api/submissions/${item.id}/comments`, {
+        method: "POST",
+        body: JSON.stringify({
+          file_path: selectedPath,
+          line_number: suggestion.lineNumber,
+          body: suggestion.body
+        })
+      });
+      setDismissedSuggestions((current) => new Set(current).add(suggestion.id));
+      await onRefresh();
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setAcceptingSuggestion(null);
+    }
+  };
+
   if (loading) {
     return <div className="code-loading"><div className="spinner" /><span>Загрузка зафиксированной версии кода…</span></div>;
   }
@@ -1045,8 +1156,27 @@ function CodeReviewPanel({
     return <div className="empty-state tall"><strong>Файлы для просмотра не найдены</strong><span>Откройте зафиксированную версию в GitHub.</span></div>;
   }
 
+  const confirmedCount = item.criteria.filter((criterion) => criterion.status === "pass").length;
+  const missingCount = item.criteria.filter((criterion) => criterion.status === "fail").length;
+  const manualCount = item.criteria.filter((criterion) => criterion.status === "needs_human").length;
+  const successfulModels = item.model_runs
+    .filter((run) => run.status === "success")
+    .map((run) => modelDisplayName(run.model));
+
   return (
-    <section className="code-review-panel">
+    <>
+      <section className="ai-code-summary">
+        <div>
+          <span>AI-предварительное ревью</span>
+          <strong>{item.suggested_points ?? 0}/{item.assessed_points ?? 0}</strong>
+          <small>{successfulModels.length ? successfulModels.join(" → ") : "Формальные проверки; модель не запускалась"}</small>
+        </div>
+        <div><span>Подтверждено</span><strong>{confirmedCount}</strong></div>
+        <div><span>Не найдено</span><strong>{missingCount}</strong></div>
+        <div><span>Решает ревьюер</span><strong>{manualCount}</strong></div>
+        <p>Подсветка показывает, на каких строках AI нашёл основания. Отсутствующий функционал остаётся в списке критериев без искусственной привязки к строке.</p>
+      </section>
+      <section className="code-review-panel">
       <aside className="file-browser">
         <div className="file-browser-heading">
           <strong>Файлы</strong>
@@ -1081,11 +1211,12 @@ function CodeReviewPanel({
               {selectedFile.content.split("\n").map((line, index) => {
                 const lineNumber = index + 1;
                 const lineComments = comments.filter((comment) => comment.line_number === lineNumber);
+                const lineSuggestions = suggestions.filter((suggestion) => suggestion.lineNumber === lineNumber);
                 return (
                   <React.Fragment key={lineNumber}>
                     <button
                       type="button"
-                      className={draftLine === lineNumber ? "code-line selected" : "code-line"}
+                      className={`code-line${draftLine === lineNumber ? " selected" : ""}${lineSuggestions.length ? " ai-highlight" : ""}`}
                       onClick={() => {
                         setDraftLine(lineNumber);
                         setDraft("");
@@ -1099,6 +1230,33 @@ function CodeReviewPanel({
                       <div className="inline-comment" key={comment.id}>
                         <span>Ревьюер · строка {comment.line_number}</span>
                         <p>{comment.body}</p>
+                      </div>
+                    ))}
+                    {lineSuggestions.map((suggestion) => (
+                      <div className="ai-inline-suggestion" key={suggestion.id}>
+                        <div>
+                          <span>AI-предложение</span>
+                          {suggestion.confidence !== null && <small>Уверенность {Math.round(suggestion.confidence * 100)}%</small>}
+                        </div>
+                        <strong>{suggestion.title}</strong>
+                        <p>{suggestion.body}</p>
+                        <div className="ai-suggestion-actions">
+                          <button
+                            className="secondary"
+                            type="button"
+                            onClick={() => setDismissedSuggestions((current) => new Set(current).add(suggestion.id))}
+                          >
+                            Отклонить
+                          </button>
+                          <button
+                            className="primary"
+                            type="button"
+                            disabled={acceptingSuggestion === suggestion.id}
+                            onClick={() => acceptSuggestion(suggestion)}
+                          >
+                            {acceptingSuggestion === suggestion.id ? "Сохранение…" : "Добавить в обратную связь"}
+                          </button>
+                        </div>
                       </div>
                     ))}
                     {draftLine === lineNumber && (
@@ -1121,6 +1279,7 @@ function CodeReviewPanel({
         )}
       </div>
     </section>
+    </>
   );
 }
 
