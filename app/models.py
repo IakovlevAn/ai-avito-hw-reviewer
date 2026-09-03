@@ -73,6 +73,11 @@ class Submission(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    code_comments: Mapped[list[CodeComment]] = relationship(
+        back_populates="submission",
+        cascade="all, delete-orphan",
+        order_by="CodeComment.created_at",
+    )
 
 
 class CriterionResult(Base):
@@ -108,6 +113,19 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     submission: Mapped[Submission] = relationship(back_populates="events")
+
+
+class CodeComment(Base):
+    __tablename__ = "code_comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), index=True)
+    file_path: Mapped[str] = mapped_column(String(500))
+    line_number: Mapped[int] = mapped_column(Integer)
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    submission: Mapped[Submission] = relationship(back_populates="code_comments")
 
 
 class AiUsageAssessment(Base):

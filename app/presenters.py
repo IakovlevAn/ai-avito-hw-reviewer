@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from urllib.parse import quote
 
 from app.models import CriterionResult, Submission
 
@@ -34,10 +35,18 @@ def submission_payload(submission: Submission, *, include_details: bool = True) 
     unresolved = sum(item.final_points is None for item in submission.criteria)
     ai_assessment = submission.ai_usage_assessment
     execution = submission.execution_check
+    source_base = f"https://github.com/{submission.repository_owner}/{submission.repository_name}"
+    if submission.commit_sha:
+        source_url = f"{source_base}/tree/{submission.commit_sha}"
+        if submission.subdirectory:
+            source_url += f"/{quote(submission.subdirectory, safe='/')}"
+    else:
+        source_url = submission.repository_url
     return {
         "id": submission.id,
         "title": submission.title,
         "repository_url": submission.repository_url,
+        "source_url": source_url,
         "repository_owner": submission.repository_owner,
         "repository_name": submission.repository_name,
         "subdirectory": submission.subdirectory,
@@ -115,6 +124,20 @@ def submission_payload(submission: Submission, *, include_details: bool = True) 
                     "created_at": iso(event.created_at),
                 }
                 for event in submission.events
+            ]
+            if include_details
+            else []
+        ),
+        "code_comments": (
+            [
+                {
+                    "id": comment.id,
+                    "file_path": comment.file_path,
+                    "line_number": comment.line_number,
+                    "body": comment.body,
+                    "created_at": iso(comment.created_at),
+                }
+                for comment in submission.code_comments
             ]
             if include_details
             else []

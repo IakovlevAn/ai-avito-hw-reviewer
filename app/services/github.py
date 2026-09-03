@@ -75,7 +75,12 @@ class GitHubClient:
             headers["Authorization"] = f"Bearer {self.settings.github_token}"
         return headers
 
-    async def fetch_snapshot(self, location: GitHubLocation, subdirectory: str = "") -> RepositorySnapshot:
+    async def fetch_snapshot(
+        self,
+        location: GitHubLocation,
+        subdirectory: str = "",
+        commit_sha_override: str | None = None,
+    ) -> RepositorySnapshot:
         timeout = httpx.Timeout(self.settings.github_timeout_seconds)
         async with httpx.AsyncClient(
             base_url="https://api.github.com",
@@ -87,7 +92,10 @@ class GitHubClient:
             self._raise(repo_response, "Не удалось получить репозиторий")
             repo_data = repo_response.json()
 
-            if location.pull_number is not None:
+            if commit_sha_override:
+                branch = repo_data["default_branch"]
+                commit_sha = commit_sha_override
+            elif location.pull_number is not None:
                 pull_response = await client.get(
                     f"/repos/{location.owner}/{location.repository}/pulls/{location.pull_number}"
                 )

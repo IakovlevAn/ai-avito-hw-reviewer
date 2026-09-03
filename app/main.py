@@ -4,6 +4,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +19,7 @@ from app.database import SessionLocal, create_schema, get_session
 from app.models import (
     AiUsageAssessment,
     AuditEvent,
+    CodeComment,
     CriterionResult,
     ExecutionCheck,
     ModelRun,
@@ -70,6 +72,16 @@ class CriterionUpdate(BaseModel):
     final_feedback: str = Field(default="", max_length=4000)
 
 
+class CodeCommentCreate(BaseModel):
+    file_path: str = Field(min_length=1, max_length=500)
+    line_number: int = Field(ge=1)
+    body: str = Field(min_length=1, max_length=4000)
+
+
+class ReviewerUpdate(BaseModel):
+    reviewer_id: int
+
+
 def get_submission_or_404(session: Session, submission_id: int) -> Submission:
     item = session.scalar(
         select(Submission)
@@ -81,6 +93,7 @@ def get_submission_or_404(session: Session, submission_id: int) -> Submission:
             selectinload(Submission.ai_usage_assessment),
             selectinload(Submission.model_runs),
             selectinload(Submission.execution_check),
+            selectinload(Submission.code_comments),
         )
     )
     if item is None:
@@ -342,6 +355,86 @@ def create_submission(
 
 @app.get("/api/submissions/{submission_id}")
 def get_submission(submission_id: int, session: Session = Depends(get_session)) -> dict:
+    return submission_payload(get_submission_or_404(session, submission_id))
+
+
+@app.get("/api/submissions/{submission_id}/files")
+async def get_submission_files(submission_id: int, session: Session = Depends(get_session)) -> dict:
+    submission = get_submission_or_404(session, submission_id)
+    if not submission.commit_sha:
+        raise HTTPException(status_code=409, detail="Версия репозитория ещё не зафиксирована")
+    location = parse_github_url(submission.repository_url)
+    try:
+        snapshot = await GitHubClient(settings).fetch_snapshot(
+            location,
+            submission.subdirectory,
+            commit_sha_override=submission.commit_sha,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    root = f"https://github.com/{submission.repository_owner}/{submission.repository_name}/blob/{submission.commit_sha}"
+    prefix = submission.subdirectory.strip("/")
+    return {
+        "commit_sha": submission.commit_sha,
+        "files": [
+            {
+                "path": path,
+                "content": content,
+                "url": f"{root}/{quote('/'.join(filter(None, [prefix, path])), safe='/')}",
+            }
+            for path, content in sorted(snapshot.files.items())
+        ],
+    }
+
+
+@app.post("/api/submissions/{submission_id}/comments", status_code=status.HTTP_201_CREATED)
+def create_code_comment(
+    submission_id: int,
+    payload: CodeCommentCreate,
+    session: Session = Depends(get_session),
+) -> dict:
+    submission = get_submission_or_404(session, submission_id)
+    file_path = payload.file_path.strip("/").strip()
+    body = payload.body.strip()
+    if not file_path or not body:
+        raise HTTPException(status_code=422, detail="Укажите файл и текст комментария")
+    comment = CodeComment(
+        file_path=file_path,
+        line_number=payload.line_number,
+        body=body,
+    )
+    submission.code_comments.append(comment)
+    submission.status = "human_review"
+    submission.events.append(
+        AuditEvent(
+            kind="code_comment_added",
+            message=f"Добавлен комментарий к {comment.file_path}:{comment.line_number}",
+        )
+    )
+    session.commit()
+    return submission_payload(get_submission_or_404(session, submission_id))
+
+
+@app.patch("/api/submissions/{submission_id}/reviewer")
+def update_reviewer(
+    submission_id: int,
+    payload: ReviewerUpdate,
+    session: Session = Depends(get_session),
+) -> dict:
+    submission = get_submission_or_404(session, submission_id)
+    reviewer = session.get(Reviewer, payload.reviewer_id)
+    if reviewer is None or not reviewer.is_active:
+        raise HTTPException(status_code=422, detail="Активный ревьюер не найден")
+    if reviewer.specialization != "Go":
+        raise HTTPException(status_code=422, detail="У ревьюера нет специализации Go")
+    previous = submission.reviewer.name if submission.reviewer else "не назначен"
+    submission.reviewer = reviewer
+    reviewer.last_assigned_at = utcnow()
+    submission.events.append(
+        AuditEvent(kind="reviewer_reassigned", message=f"Ревьюер изменён: {previous} → {reviewer.name}")
+    )
+    session.commit()
     return submission_payload(get_submission_or_404(session, submission_id))
 
 

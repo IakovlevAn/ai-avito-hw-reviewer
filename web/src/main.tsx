@@ -34,6 +34,7 @@ type Submission = {
   id: number;
   title: string;
   repository_url: string;
+  source_url: string;
   subdirectory: string;
   commit_sha: string | null;
   status: string;
@@ -55,6 +56,13 @@ type Submission = {
     limitations: string;
   };
   events: Array<{ id: number; kind: string; message: string; created_at: string }>;
+  code_comments: Array<{
+    id: number;
+    file_path: string;
+    line_number: number;
+    body: string;
+    created_at: string;
+  }>;
   execution_check: {
     status: string;
     go_version: string | null;
@@ -66,6 +74,18 @@ type Submission = {
     output_summary: string;
   } | null;
 };
+
+type RepositoryFiles = {
+  commit_sha: string;
+  files: Array<{ path: string; content: string; url: string }>;
+};
+
+type RubricResponse = {
+  total_points: number;
+  criteria: Array<{ code: string; section: string; title: string; max_points: number }>;
+};
+
+const repositoryFilesCache = new Map<number, RepositoryFiles>();
 
 type Dashboard = {
   stats: { total: number; ready: number; approved: number; overdue: number };
@@ -96,6 +116,41 @@ const activeHomework = {
   submissionTitle: "Домашняя работа · Сервис курьеров",
   deadline: "10 сентября 2026, 23:59 МСК",
   summary: "Разработайте Go-сервис с HTTP API для управления курьерами, хранением данных в PostgreSQL и понятным разделением ответственности в коде.",
+  stages: [
+    {
+      title: "Этап 1. Базовый HTTP-сервис",
+      objective: "Подготовить каркас Go-приложения, настроить запуск HTTP-сервера и служебные endpoint’ы.",
+      requirements: [
+        "Организовать проект по логическим каталогам: cmd, internal и при необходимости pkg.",
+        "Читать PORT из .env и разрешить переопределение через флаг --port.",
+        "Реализовать GET /ping: статус 200 и JSON { \"message\": \"pong\" }.",
+        "Реализовать HEAD /healthcheck: статус 204 без тела ответа.",
+        "Обрабатывать SIGINT и SIGTERM, завершать сервер через context и выводить в stdout сообщение Shutting down service-courier."
+      ]
+    },
+    {
+      title: "Этап 2. PostgreSQL и API курьеров",
+      objective: "Подключить PostgreSQL, создать схему данных и реализовать операции с курьерами.",
+      requirements: [
+        "Настраивать host, port, dbname, user и password через .env.",
+        "Создать миграцию goose для таблицы couriers с полями id, name, phone, status, created_at и updated_at; phone должен быть уникальным.",
+        "Реализовать GET /courier/{id}, GET /couriers, POST /courier и PUT /courier.",
+        "Возвращать предусмотренные условием статусы 200, 201, 400, 404 и 409.",
+        "Использовать SQL-плейсхолдеры $1, $2 и далее; корректно закрывать ресурсы и обрабатывать ошибки."
+      ]
+    },
+    {
+      title: "Этап 3. Архитектура",
+      objective: "Разделить код по ответственности и явно оформить зависимости между слоями.",
+      requirements: [
+        "Выделить HTTP-слой, бизнес-логику, репозиторий и бизнес-сущности.",
+        "Определить интерфейсы между handler и usecase, а также между usecase и repository.",
+        "Передавать зависимости через конструкторы и собирать их в main.go.",
+        "Сохранить работоспособность сервиса после рефакторинга.",
+        "Не переусложнять решение; соблюдать Low Coupling / High Cohesion, SOLID и DRY."
+      ]
+    }
+  ],
   sections: [
     { title: "Базовый сервис", points: 30 },
     { title: "Данные и API", points: 40 },
@@ -223,6 +278,14 @@ function studentNameFor(item: Submission): string {
   return item.title.startsWith(prefix) ? item.title.slice(prefix.length) : item.title;
 }
 
+function defaultCodePath(files: RepositoryFiles["files"]): string | null {
+  return files.find((file) => file.path === "cmd/main.go")?.path
+    ?? files.find((file) => file.path.endsWith("/main.go"))?.path
+    ?? files.find((file) => file.path.endsWith(".go"))?.path
+    ?? files[0]?.path
+    ?? null;
+}
+
 function App() {
   const [role, setRole] = useState<Role>("coordinator");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -324,6 +387,8 @@ function App() {
       ) : role === "coordinator" ? (
         <CoordinatorView
           dashboard={dashboard!}
+          onRefresh={async () => { await loadDashboard(); }}
+          onError={setMessage}
           onOpen={async (id) => {
             await openSubmission(id);
             setRole("reviewer");
@@ -356,11 +421,41 @@ function App() {
 
 function CoordinatorView({
   dashboard,
+  onRefresh,
+  onError,
   onOpen
 }: {
   dashboard: Dashboard;
+  onRefresh: () => Promise<void>;
+  onError: (message: string) => void;
   onOpen: (id: number) => Promise<void>;
 }) {
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const [reassigningId, setReassigningId] = useState<number | null>(null);
+  const filteredSubmissions = dashboard.submissions.filter((item) => {
+    const matchesQuery = studentNameFor(item).toLocaleLowerCase("ru-RU").includes(query.trim().toLocaleLowerCase("ru-RU"));
+    const matchesStatus = statusFilter === "all"
+      || (statusFilter === "attention" && (item.status === "error" || (item.status !== "approved" && new Date(item.due_at) < new Date())))
+      || item.status === statusFilter;
+    return matchesQuery && matchesStatus;
+  });
+
+  const reassign = async (submissionId: number, reviewerId: number) => {
+    setReassigningId(submissionId);
+    try {
+      await request(`/api/submissions/${submissionId}/reviewer`, {
+        method: "PATCH",
+        body: JSON.stringify({ reviewer_id: reviewerId })
+      });
+      await onRefresh();
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setReassigningId(null);
+    }
+  };
+
   return (
     <main className="workspace">
       <section className="page-heading">
@@ -440,8 +535,25 @@ function CoordinatorView({
         <div className="section-heading">
           <div>
             <h2>Очередь проверки</h2>
-            <p>Работы отсортированы по времени поступления.</p>
+            <p>Контроль статусов, сроков и ручная корректировка назначения.</p>
           </div>
+          <span className="queue-count">Показано: {filteredSubmissions.length}</span>
+        </div>
+        <div className="queue-filters">
+          <label>
+            Поиск по студенту
+            <input value={query} placeholder="Имя студента" onChange={(event) => setQuery(event.target.value)} />
+          </label>
+          <label>
+            Статус
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">Все статусы</option>
+              <option value="review_ready">Требуется решение</option>
+              <option value="human_review">Ручная проверка</option>
+              <option value="approved">Подтверждена</option>
+              <option value="attention">Требуют внимания</option>
+            </select>
+          </label>
         </div>
         {dashboard.submissions.length === 0 ? (
           <div className="empty-state">
@@ -456,19 +568,32 @@ function CoordinatorView({
               <span>Статус</span>
               <span>Балл <InfoTip text="Предварительная сумма по критериям, которые система смогла оценить." /></span>
             </div>
-            {dashboard.submissions.map((item) => (
-              <button className="submission-row" type="button" key={item.id} onClick={() => onOpen(item.id)}>
-                <span className="submission-title">
+            {filteredSubmissions.map((item) => (
+              <div className="submission-row" key={item.id}>
+                <button className="submission-open" type="button" onClick={() => onOpen(item.id)}>
                   <strong>{studentNameFor(item)}</strong>
                   <small>Отправка #{item.id} · срок ревью {formatDate(item.due_at)}</small>
-                </span>
-                <span>{item.reviewer?.name ?? "Не назначен"}</span>
+                </button>
+                <select
+                  className="reviewer-inline"
+                  aria-label={`Ревьюер для отправки ${item.id}`}
+                  value={item.reviewer?.id ?? ""}
+                  disabled={reassigningId === item.id}
+                  onChange={(event) => reassign(item.id, Number(event.target.value))}
+                >
+                  {dashboard.reviewers.map((reviewer) => (
+                    <option value={reviewer.id} key={reviewer.id}>{reviewer.name}</option>
+                  ))}
+                </select>
                 <StatusBadge status={item.status} />
                 <span className="score">
                   {item.suggested_points === null ? "—" : `${item.suggested_points}/${item.assessed_points}`}
                 </span>
-              </button>
+              </div>
             ))}
+            {filteredSubmissions.length === 0 && (
+              <div className="empty-state compact"><span>Работы по выбранным условиям отсутствуют.</span></div>
+            )}
           </div>
         )}
       </section>
@@ -648,6 +773,8 @@ function ReviewDetail({
   onError: (message: string) => void;
 }) {
   const [savingId, setSavingId] = useState<number | null>(null);
+  const [reviewTab, setReviewTab] = useState<"code" | "criteria">("code");
+  const [requestedFile, setRequestedFile] = useState<string | null>(null);
   const sections = Array.from(new Set(item.criteria.map((criterion) => criterion.section)));
   const signalLabel = {
     low: "Низкий сигнал",
@@ -692,7 +819,7 @@ function ReviewDetail({
           <p className="eyebrow">{activeHomework.code} · Отправка #{item.id}</p>
           <h1>{studentNameFor(item)}</h1>
           <p className="review-assignment">{activeHomework.title}</p>
-          <a href={item.repository_url} target="_blank" rel="noreferrer">Открыть в GitHub ↗</a>
+          <a href={item.source_url} target="_blank" rel="noreferrer">Открыть зафиксированную версию в GitHub ↗</a>
         </div>
         <div className="review-total">
           <span>Предварительный результат <InfoTip text="Сумма предложенных баллов только по оценённым критериям. Итог определяет ревьюер." /></span>
@@ -701,22 +828,36 @@ function ReviewDetail({
         </div>
       </div>
 
-      <div className="responsibility-note">
-        Результат не опубликован. Проверьте критерии без оценки, при необходимости измените предложенные баллы и подтвердите итог.
-      </div>
+      <nav className="content-tabs review-tabs" aria-label="Рабочая область ревьюера">
+        <button type="button" className={reviewTab === "code" ? "active" : ""} onClick={() => setReviewTab("code")}>Код и комментарии</button>
+        <button type="button" className={reviewTab === "criteria" ? "active" : ""} onClick={() => setReviewTab("criteria")}>Критерии и результат</button>
+      </nav>
 
-      {item.execution_check && (
-        <section className="execution-summary">
-          <div>
-            <p className="eyebrow">Проверка запуска</p>
-            <h2>Go {item.execution_check.go_version}</h2>
+      <div hidden={reviewTab !== "code"}>
+        <CodeReviewPanel
+          item={item}
+          requestedFile={requestedFile}
+          onRefresh={onRefresh}
+          onError={onError}
+        />
+      </div>
+      <div hidden={reviewTab !== "criteria"}>
+          <div className="responsibility-note">
+            Результат не опубликован. Проверьте критерии без оценки, при необходимости измените предложенные баллы и подтвердите итог.
           </div>
-          <div><span>Сборка</span><strong>{item.execution_check.tests_ok ? "Успешно" : "Ошибка"}</strong></div>
-          <div><span>go vet</span><strong>{item.execution_check.vet_ok ? "Успешно" : "Ошибка"}</strong></div>
-          <div><span>Тесты</span><strong>{item.execution_check.has_tests ? "Найдены" : "Нет в проекте"}</strong></div>
-          <div><span>Время</span><strong>{item.execution_check.duration_seconds?.toFixed(1)} с</strong></div>
-        </section>
-      )}
+
+          {item.execution_check && (
+            <section className="execution-summary">
+              <div>
+                <p className="eyebrow">Проверка запуска</p>
+                <h2>Go {item.execution_check.go_version}</h2>
+              </div>
+              <div><span>Сборка</span><strong>{item.execution_check.tests_ok ? "Успешно" : "Ошибка"}</strong></div>
+              <div><span>go vet</span><strong>{item.execution_check.vet_ok ? "Успешно" : "Ошибка"}</strong></div>
+              <div><span>Тесты</span><strong>{item.execution_check.has_tests ? "Найдены" : "Нет в проекте"}</strong></div>
+              <div><span>Время</span><strong>{item.execution_check.duration_seconds?.toFixed(1)} с</strong></div>
+            </section>
+          )}
 
       {sections.map((section) => (
         <section className="criteria-section" key={section}>
@@ -739,7 +880,21 @@ function ReviewDetail({
                 {criterion.evidence.length > 0 && (
                   <details>
                     <summary>Показать подтверждения</summary>
-                    <ul>{criterion.evidence.map((evidence) => <li key={evidence}>{evidence}</li>)}</ul>
+                    <ul className="evidence-list">
+                      {criterion.evidence.map((evidence) => (
+                        <li key={evidence}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRequestedFile(evidence);
+                              setReviewTab("code");
+                            }}
+                          >
+                            {evidence}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
                   </details>
                 )}
               </div>
@@ -774,24 +929,22 @@ function ReviewDetail({
         </section>
       ))}
 
-      <section className="ai-signal">
+      {item.ai_usage_signal.reasons.length > 0 && <section className="ai-signal">
         <div>
           <p className="eyebrow">Дополнительная проверка</p>
           <h2>Признаки использования генеративного ИИ</h2>
-          <p className="signal-result">{item.ai_usage_signal.reasons.length ? "Обнаружены основания для ручной проверки." : "Достаточных оснований для вывода нет."}</p>
+          <p className="signal-result">Обнаружены основания для ручной проверки.</p>
           <p>{item.ai_usage_signal.limitations}</p>
-          {item.ai_usage_signal.reasons.length > 0 && (
-            <ul>
-              {item.ai_usage_signal.reasons.map((reason) => (
-                <li key={`${reason.description}-${reason.evidence_refs.join("-")}`}>
-                  {reason.description}
-                </li>
-              ))}
-            </ul>
-          )}
+          <ul>
+            {item.ai_usage_signal.reasons.map((reason) => (
+              <li key={`${reason.description}-${reason.evidence_refs.join("-")}`}>
+                {reason.description}
+              </li>
+            ))}
+          </ul>
         </div>
         <span className="status status-human">{signalLabel}</span>
-      </section>
+      </section>}
 
       <div className="review-actions">
         <a className="secondary button-link" href={`/api/submissions/${item.id}/export.xlsx`}>Скачать Excel</a>
@@ -799,7 +952,175 @@ function ReviewDetail({
           {item.status === "approved" ? "Результат подтверждён" : "Подтвердить результат"}
         </button>
       </div>
+      </div>
     </div>
+  );
+}
+
+function CodeReviewPanel({
+  item,
+  requestedFile,
+  onRefresh,
+  onError
+}: {
+  item: Submission;
+  requestedFile: string | null;
+  onRefresh: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [repository, setRepository] = useState<RepositoryFiles | null>(() => repositoryFilesCache.get(item.id) ?? null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [loading, setLoading] = useState(!repositoryFilesCache.has(item.id));
+  const [draftLine, setDraftLine] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const cached = repositoryFilesCache.get(item.id);
+    if (cached) {
+      setRepository(cached);
+      setSelectedPath((current) => {
+        if (requestedFile && cached.files.some((file) => file.path === requestedFile)) return requestedFile;
+        if (current && cached.files.some((file) => file.path === current)) return current;
+        return defaultCodePath(cached.files);
+      });
+      setLoading(false);
+      return () => { cancelled = true; };
+    }
+    setLoading(true);
+    setRepository(null);
+    request<RepositoryFiles>(`/api/submissions/${item.id}/files`)
+      .then((data) => {
+        if (cancelled) return;
+        repositoryFilesCache.set(item.id, data);
+        setRepository(data);
+        setSelectedPath((current) => {
+          if (requestedFile && data.files.some((file) => file.path === requestedFile)) return requestedFile;
+          if (current && data.files.some((file) => file.path === current)) return current;
+          return defaultCodePath(data.files);
+        });
+      })
+      .catch((error: Error) => {
+        if (!cancelled) onError(error.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [item.id, onError]);
+
+  useEffect(() => {
+    if (requestedFile && repository?.files.some((file) => file.path === requestedFile)) {
+      setSelectedPath(requestedFile);
+    }
+  }, [repository, requestedFile]);
+
+  const selectedFile = repository?.files.find((file) => file.path === selectedPath) ?? null;
+  const comments = item.code_comments.filter((comment) => comment.file_path === selectedPath);
+
+  const saveComment = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedPath || !draftLine || !draft.trim()) return;
+    setSaving(true);
+    try {
+      await request(`/api/submissions/${item.id}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ file_path: selectedPath, line_number: draftLine, body: draft.trim() })
+      });
+      setDraft("");
+      setDraftLine(null);
+      await onRefresh();
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="code-loading"><div className="spinner" /><span>Загрузка зафиксированной версии кода…</span></div>;
+  }
+  if (!repository || repository.files.length === 0) {
+    return <div className="empty-state tall"><strong>Файлы для просмотра не найдены</strong><span>Откройте зафиксированную версию в GitHub.</span></div>;
+  }
+
+  return (
+    <section className="code-review-panel">
+      <aside className="file-browser">
+        <div className="file-browser-heading">
+          <strong>Файлы</strong>
+          <span>{repository.files.length}</span>
+        </div>
+        <div className="file-list">
+          {repository.files.map((file) => (
+            <button
+              type="button"
+              className={file.path === selectedPath ? "active" : ""}
+              key={file.path}
+              title={file.path}
+              onClick={() => {
+                setSelectedPath(file.path);
+                setDraftLine(null);
+              }}
+            >
+              <span>{file.path.split("/").at(-1)}</span>
+              <small>{file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "корень"}</small>
+            </button>
+          ))}
+        </div>
+      </aside>
+      <div className="code-workspace">
+        {selectedFile && (
+          <>
+            <header className="code-file-heading">
+              <div><strong>{selectedFile.path}</strong><span>commit {repository.commit_sha.slice(0, 8)}</span></div>
+              <a href={selectedFile.url} target="_blank" rel="noreferrer">Открыть файл в GitHub ↗</a>
+            </header>
+            <div className="code-lines" role="table" aria-label={`Код файла ${selectedFile.path}`}>
+              {selectedFile.content.split("\n").map((line, index) => {
+                const lineNumber = index + 1;
+                const lineComments = comments.filter((comment) => comment.line_number === lineNumber);
+                return (
+                  <React.Fragment key={lineNumber}>
+                    <button
+                      type="button"
+                      className={draftLine === lineNumber ? "code-line selected" : "code-line"}
+                      onClick={() => {
+                        setDraftLine(lineNumber);
+                        setDraft("");
+                      }}
+                      aria-label={`Добавить комментарий к строке ${lineNumber}`}
+                    >
+                      <span className="line-number">{lineNumber}</span>
+                      <code>{line || " "}</code>
+                    </button>
+                    {lineComments.map((comment) => (
+                      <div className="inline-comment" key={comment.id}>
+                        <span>Ревьюер · строка {comment.line_number}</span>
+                        <p>{comment.body}</p>
+                      </div>
+                    ))}
+                    {draftLine === lineNumber && (
+                      <form className="inline-comment-form" onSubmit={saveComment}>
+                        <label>
+                          Комментарий к строке {lineNumber}
+                          <textarea autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Что нужно изменить и почему" />
+                        </label>
+                        <div>
+                          <button className="secondary" type="button" onClick={() => setDraftLine(null)}>Отмена</button>
+                          <button className="primary" type="submit" disabled={!draft.trim() || saving}>{saving ? "Сохранение…" : "Добавить комментарий"}</button>
+                        </div>
+                      </form>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -817,6 +1138,13 @@ function StudentView({
   onError: (message: string) => void;
 }) {
   const [studentName, setStudentName] = useState("");
+  const [assignmentTab, setAssignmentTab] = useState<"brief" | "rubric">("brief");
+  const [rubric, setRubric] = useState<RubricResponse | null>(null);
+  useEffect(() => {
+    request<RubricResponse>("/api/rubric")
+      .then(setRubric)
+      .catch((error: Error) => onError(error.message));
+  }, [onError]);
   const normalizedName = studentName.trim().toLocaleLowerCase("ru-RU");
   const studentSubmissions = normalizedName
     ? submissions.filter((submission) => studentNameFor(submission).toLocaleLowerCase("ru-RU") === normalizedName)
@@ -827,7 +1155,7 @@ function StudentView({
   return (
     <main className="student-page">
       <section className="assignment-detail surface">
-        <div className="homework-main">
+        <div className="assignment-overview">
           <p className="context-line">{activeHomework.course} · {activeHomework.code}</p>
           <h1>{activeHomework.title}</h1>
           <p className="assignment-description">{activeHomework.summary}</p>
@@ -850,15 +1178,46 @@ function StudentView({
             </div>
           </div>
         </div>
-        <div className="rubric-preview">
-          <h2>Разделы оценки</h2>
-          {activeHomework.sections.map((section) => (
-            <div key={section.title}>
-              <span>{section.title}</span>
-              <strong>{section.points}</strong>
+        <nav className="content-tabs" aria-label="Материалы домашней работы">
+          <button type="button" className={assignmentTab === "brief" ? "active" : ""} onClick={() => setAssignmentTab("brief")}>Условие</button>
+          <button type="button" className={assignmentTab === "rubric" ? "active" : ""} onClick={() => setAssignmentTab("rubric")}>Критерии оценки</button>
+        </nav>
+        {assignmentTab === "brief" ? (
+          <div className="assignment-condition">
+            <section className="submission-requirements">
+              <h2>Формат сдачи</h2>
+              <p>Передайте ссылку на публичный GitHub-репозиторий или Pull Request. Если решение находится не в корне репозитория, укажите путь к каталогу. Система зафиксирует конкретный commit для проверки.</p>
+            </section>
+            <div className="assignment-stages">
+              {activeHomework.stages.map((stage) => (
+                <article key={stage.title}>
+                  <h2>{stage.title}</h2>
+                  <p>{stage.objective}</p>
+                  <h3>Требования</h3>
+                  <ul>{stage.requirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul>
+                </article>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <div className="rubric-full">
+            <div className="rubric-summary">
+              <h2>Шкала оценки</h2>
+              <strong>{rubric?.total_points ?? 100} баллов</strong>
+              <p>Качественные критерии без достаточных данных передаются ревьюеру без автоматического балла.</p>
+            </div>
+            {Array.from(new Set(rubric?.criteria.map((criterion) => criterion.section) ?? [])).map((section) => (
+              <section key={section}>
+                <h2>{section}</h2>
+                {rubric?.criteria.filter((criterion) => criterion.section === section).map((criterion) => (
+                  <div className="rubric-row" key={criterion.code}>
+                    <span>{criterion.title}</span><strong>{criterion.max_points}</strong>
+                  </div>
+                ))}
+              </section>
+            ))}
+          </div>
+        )}
       </section>
       <section className="surface student-submit">
         <div className="section-heading">
@@ -904,7 +1263,7 @@ function StudentView({
                 <div><dt>Ревьюер</dt><dd>{item.reviewer?.name ?? "Назначается"}</dd></div>
                 <div><dt>Срок проверки</dt><dd>{formatDate(item.due_at)}</dd></div>
                 <div><dt>Версия <InfoTip text="Коммит GitHub, зафиксированный системой при отправке." /></dt><dd>{item.commit_sha ? item.commit_sha.slice(0, 8) : "Фиксируется"}</dd></div>
-                <div><dt>Источник</dt><dd><a href={item.repository_url} target="_blank" rel="noreferrer">GitHub ↗</a></dd></div>
+                <div><dt>Источник</dt><dd><a href={item.source_url} target="_blank" rel="noreferrer">Зафиксированная версия ↗</a></dd></div>
               </dl>
               <p className="muted">Итоговый результат будет доступен после подтверждения ревьюером.</p>
             </div>
