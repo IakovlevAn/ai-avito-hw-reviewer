@@ -1,0 +1,7 @@
+.tmp/
+*.inspect.ndjson
+artifacts/avito-ai-reviewer-intermediate/
+.env
+.env.*
+!.env.example
+
