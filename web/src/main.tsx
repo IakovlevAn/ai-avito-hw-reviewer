@@ -1,6 +1,7 @@
 import React, { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
+import "@fontsource-variable/manrope";
 import "./styles.css";
 
 type Role = "coordinator" | "reviewer" | "student";
@@ -288,7 +289,11 @@ function App() {
           <span className="brand-mark" aria-hidden="true">
             <i /><i /><i /><i />
           </span>
-          <span>Avito AI Reviewer</span>
+          <svg className="avito-wordmark" width="73" height="30" viewBox="0 0 73 30" aria-label="Avito">
+            <path d="M9.664 1.08.927 23.891H5.62l1.796-4.767h9.27l1.804 4.767h4.658L14.465 1.079h-4.8Zm-.637 13.858 3.051-8.026 3.04 8.026H9.027Zm19.73 3.071-3.79-10.143h-4.476l6.103 16.026h4.438l5.995-16.026H32.55l-3.793 10.143Zm13.901-10.143h-4.26v16.026h4.26V7.866Zm-2.132-1.155a3.106 3.106 0 1 0 0-6.211 3.106 3.106 0 0 0 0 6.211ZM51.102 3.59h-4.25v4.25h-2.49v3.86h2.49v6.81c0 3.863 2.13 5.524 5.127 5.524a7.338 7.338 0 0 0 2.947-.576v-3.97a4.755 4.755 0 0 1-1.588.289c-1.302 0-2.24-.506-2.24-2.24V11.7h3.828V7.878h-3.824V3.59Zm12.781 3.986a8.305 8.305 0 1 0-.007 16.61 8.305 8.305 0 0 0 .007-16.61Zm0 12.36a4.044 4.044 0 1 1 4.04-4.044 4.036 4.036 0 0 1-4.04 4.029v.015Z" />
+          </svg>
+          <span className="brand-divider" aria-hidden="true" />
+          <span className="brand-product">AI Reviewer</span>
         </div>
         <nav className="role-switcher" aria-label="Режим интерфейса">
           {(Object.keys(roleLabels) as Role[]).map((item) => (
