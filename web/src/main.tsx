@@ -87,6 +87,18 @@ const statusLabels: Record<string, string> = {
   error: "Ошибка"
 };
 
+const activeHomework = {
+  course: "Backend-разработка на Go",
+  title: "Сервис курьеров",
+  submissionTitle: "Домашняя работа · Сервис курьеров",
+  summary: "Разработайте Go-сервис с HTTP API для управления курьерами, хранением данных в PostgreSQL и понятным разделением ответственности в коде.",
+  sections: [
+    { title: "Базовый сервис", points: 30 },
+    { title: "Данные и API", points: 40 },
+    { title: "Архитектура", points: 30 }
+  ]
+};
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
@@ -252,6 +264,18 @@ function CoordinatorView({
         </div>
       </section>
 
+      <section className="surface active-homework">
+        <div>
+          <p className="eyebrow">Активная домашняя работа</p>
+          <h2>{activeHomework.title}</h2>
+          <p>{activeHomework.course} · 100 баллов · сдача через GitHub</p>
+        </div>
+        <div className="homework-count">
+          <strong>{dashboard.submissions.length}</strong>
+          <span>получено работ</span>
+        </div>
+      </section>
+
       <section className="stats-grid">
         <Stat label="Всего работ" value={dashboard.stats.total} tone="blue" />
         <Stat label="Ждут ревьюера" value={dashboard.stats.ready} tone="purple" />
@@ -293,7 +317,7 @@ function CoordinatorView({
         {dashboard.submissions.length === 0 ? (
           <div className="empty-state">
             <strong>Работ пока нет</strong>
-            <span>Добавьте первую ссылку на GitHub.</span>
+            <span>Здесь появятся решения, которые отправят студенты.</span>
           </div>
         ) : (
           <div className="submission-table">
@@ -324,6 +348,7 @@ function GitHubSubmissionForm({
   onCreated: (item: Submission) => Promise<void>;
   onError: (message: string) => void;
 }) {
+  const [studentName, setStudentName] = useState("");
   const [repositoryUrl, setRepositoryUrl] = useState("");
   const [subdirectory, setSubdirectory] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -334,7 +359,11 @@ function GitHubSubmissionForm({
     try {
       const item = await request<Submission>("/api/submissions", {
         method: "POST",
-        body: JSON.stringify({ repository_url: repositoryUrl, subdirectory })
+        body: JSON.stringify({
+          repository_url: repositoryUrl,
+          subdirectory,
+          title: `${activeHomework.submissionTitle} · ${studentName.trim()}`
+        })
       });
       setRepositoryUrl("");
       setSubdirectory("");
@@ -349,6 +378,15 @@ function GitHubSubmissionForm({
   return (
     <form className="student-submit-form" onSubmit={submit}>
       <label>
+        Ваше имя
+        <input
+          required
+          value={studentName}
+          placeholder="Имя и фамилия"
+          onChange={(event) => setStudentName(event.target.value)}
+        />
+      </label>
+      <label>
         Ссылка на репозиторий или Pull Request
         <input
           required
@@ -358,6 +396,9 @@ function GitHubSubmissionForm({
           onChange={(event) => setRepositoryUrl(event.target.value)}
         />
       </label>
+      <button className="primary" type="submit" disabled={submitting}>
+        {submitting ? "Отправляем…" : "Отправить на проверку"}
+      </button>
       <details className="advanced-field">
         <summary>Работа лежит в отдельной папке?</summary>
         <label>
@@ -369,9 +410,6 @@ function GitHubSubmissionForm({
           />
         </label>
       </details>
-      <button className="primary" type="submit" disabled={submitting}>
-        {submitting ? "Отправляем…" : "Отправить на проверку"}
-      </button>
     </form>
   );
 }
@@ -496,7 +534,7 @@ function ReviewDetail({
     <div className="review-page">
       <div className="review-heading">
         <div>
-          <p className="eyebrow">Работа #{item.id}</p>
+          <p className="eyebrow">{activeHomework.course} · Работа #{item.id}</p>
           <h1>{item.title}</h1>
           <a href={item.repository_url} target="_blank" rel="noreferrer">Открыть в GitHub ↗</a>
         </div>
@@ -624,18 +662,33 @@ function StudentView({
   const item = selected;
   return (
     <main className="student-page">
-      <section className="page-heading">
-        <div>
-          <p className="eyebrow">Результаты студента</p>
-          <h1>Что исправить и почему</h1>
-          <p>Отправьте ссылку на GitHub и следите за проверкой в одном месте.</p>
+      <section className="homework-hero surface">
+        <div className="homework-main">
+          <p className="eyebrow">{activeHomework.course}</p>
+          <h1>{activeHomework.title}</h1>
+          <p>{activeHomework.summary}</p>
+          <div className="homework-meta">
+            <span>100 баллов</span>
+            <span>Сдача через GitHub</span>
+            <span>Итог подтверждает ревьюер</span>
+          </div>
+        </div>
+        <div className="rubric-preview">
+          <p className="eyebrow">Как оценивается</p>
+          {activeHomework.sections.map((section) => (
+            <div key={section.title}>
+              <span>{section.title}</span>
+              <strong>{section.points}</strong>
+            </div>
+          ))}
         </div>
       </section>
       <section className="surface student-submit">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Новая работа</p>
-            <h2>Отправить на проверку</h2>
+            <p className="eyebrow">Ваша работа</p>
+            <h2>Отправить решение</h2>
+            <p className="section-copy">Укажите репозиторий с этой домашней работой. Мы зафиксируем текущий коммит и начнём предварительную проверку.</p>
           </div>
         </div>
         <GitHubSubmissionForm onCreated={onCreated} onError={onError} />
