@@ -78,19 +78,21 @@ const roleLabels: Record<Role, string> = {
 };
 
 const statusLabels: Record<string, string> = {
-  received: "Получена",
+  received: "Зарегистрирована",
   assigned: "Назначена",
-  processing: "Проверяется",
-  review_ready: "Ждёт ревьюера",
-  human_review: "На проверке",
-  approved: "Готово",
+  processing: "Предварительная проверка",
+  review_ready: "Требуется решение",
+  human_review: "Ручная проверка",
+  approved: "Подтверждена",
   error: "Ошибка"
 };
 
 const activeHomework = {
+  code: "GO-HW-01",
   course: "Backend-разработка на Go",
   title: "Сервис курьеров",
   submissionTitle: "Домашняя работа · Сервис курьеров",
+  deadline: "10 сентября 2026, 23:59 МСК",
   summary: "Разработайте Go-сервис с HTTP API для управления курьерами, хранением данных в PostgreSQL и понятным разделением ответственности в коде.",
   sections: [
     { title: "Базовый сервис", points: 30 },
@@ -122,6 +124,17 @@ function formatDate(value: string): string {
 
 function StatusBadge({ status }: { status: string }) {
   return <span className={`status status-${status}`}>{statusLabels[status] ?? status}</span>;
+}
+
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="info-tip" tabIndex={0} data-tooltip={text} title={text} aria-label={text}>i</span>
+  );
+}
+
+function studentNameFor(item: Submission): string {
+  const prefix = `${activeHomework.submissionTitle} · `;
+  return item.title.startsWith(prefix) ? item.title.slice(prefix.length) : item.title;
 }
 
 function App() {
@@ -214,7 +227,7 @@ function App() {
       )}
 
       {loading ? (
-        <main className="loading">Загружаем рабочее пространство…</main>
+        <main className="loading">Загрузка данных…</main>
       ) : role === "coordinator" ? (
         <CoordinatorView
           dashboard={dashboard!}
@@ -225,6 +238,7 @@ function App() {
         />
       ) : role === "reviewer" ? (
         <ReviewerView
+          reviewers={dashboard!.reviewers}
           submissions={dashboard!.submissions}
           selected={selected}
           onOpen={openSubmission}
@@ -258,74 +272,102 @@ function CoordinatorView({
     <main className="workspace">
       <section className="page-heading">
         <div>
-          <p className="eyebrow">Рабочее пространство координатора</p>
-          <h1>Проверки без ручной очереди</h1>
-          <p>Студенты отправляют работы через GitHub. Здесь видны очередь, сроки и загрузка ревьюеров.</p>
+          <h1>Проверка домашних работ</h1>
+          <p>{activeHomework.course} · {activeHomework.code}</p>
+        </div>
+        <div className="page-context">
+          <span>Текущая роль</span>
+          <strong>Координатор</strong>
         </div>
       </section>
 
-      <section className="surface active-homework">
-        <div>
-          <p className="eyebrow">Активная домашняя работа</p>
-          <h2>{activeHomework.title}</h2>
-          <p>{activeHomework.course} · 100 баллов · сдача через GitHub</p>
+      <section className="surface assignment-summary">
+        <div className="section-heading">
+          <div>
+            <span className="field-caption">Текущая домашняя работа</span>
+            <h2>{activeHomework.title}</h2>
+          </div>
+          <span className="status status-active">Приём открыт</span>
         </div>
-        <div className="homework-count">
-          <strong>{dashboard.submissions.length}</strong>
-          <span>получено работ</span>
+        <div className="assignment-fields">
+          <div>
+            <span>Идентификатор <InfoTip text="Код домашней работы в рамках курса." /></span>
+            <strong>{activeHomework.code}</strong>
+          </div>
+          <div>
+            <span>Срок сдачи <InfoTip text="После указанного времени новая отправка считается просроченной." /></span>
+            <strong>{activeHomework.deadline}</strong>
+          </div>
+          <div>
+            <span>Способ сдачи <InfoTip text="Студент передаёт ссылку на репозиторий или Pull Request." /></span>
+            <strong>GitHub</strong>
+          </div>
+          <div>
+            <span>Максимальный балл</span>
+            <strong>100</strong>
+          </div>
         </div>
       </section>
 
       <section className="stats-grid">
-        <Stat label="Всего работ" value={dashboard.stats.total} tone="blue" />
-        <Stat label="Ждут ревьюера" value={dashboard.stats.ready} tone="purple" />
-        <Stat label="Подтверждены" value={dashboard.stats.approved} tone="green" />
-        <Stat label="Просрочены" value={dashboard.stats.overdue} tone="red" />
+        <Stat label="Все отправки" value={dashboard.stats.total} help="Все зарегистрированные отправки по текущей домашней работе." />
+        <Stat label="Ожидают решения" value={dashboard.stats.ready} help="Предварительная проверка завершена; требуется решение ревьюера." />
+        <Stat label="Подтверждены" value={dashboard.stats.approved} help="Работы с подтверждёнными баллами и комментариями." />
+        <Stat label="Срок ревью истёк" value={dashboard.stats.overdue} help="Работы без подтверждённого результата после установленного срока проверки." />
       </section>
 
       <section className="surface coordinator-reviewers">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Команда проверки</p>
-              <h2>Текущая загрузка</h2>
-            </div>
+        <div className="section-heading">
+          <div>
+            <h2>Распределение по ревьюерам</h2>
+            <p>Учитываются все работы без подтверждённого результата.</p>
           </div>
-          <div className="reviewer-list">
-            {dashboard.reviewers.map((reviewer) => (
-              <div className="reviewer-row" key={reviewer.id}>
-                <div className="avatar">{reviewer.name.slice(-1)}</div>
-                <div className="reviewer-meta">
-                  <strong>{reviewer.name}</strong>
-                  <span>{reviewer.specialization}</span>
-                </div>
-                <div className="load-bar" aria-label={`${reviewer.active_reviews} из ${reviewer.capacity}`}>
-                  <i style={{ width: `${Math.min(100, reviewer.active_reviews / reviewer.capacity * 100)}%` }} />
-                </div>
-                <span className="load-value">{reviewer.active_reviews}/{reviewer.capacity}</span>
+        </div>
+        <div className="reviewer-table-head">
+          <span>Ревьюер</span>
+          <span>Специализация</span>
+          <span>Загрузка</span>
+          <span>Активные <InfoTip text="Количество активных работ и лимит параллельных проверок." /></span>
+        </div>
+        <div className="reviewer-list">
+          {dashboard.reviewers.map((reviewer) => (
+            <div className="reviewer-row" key={reviewer.id}>
+              <strong>{reviewer.name}</strong>
+              <span>{reviewer.specialization}</span>
+              <div className="load-bar" aria-label={`${reviewer.active_reviews} из ${reviewer.capacity}`}>
+                <i style={{ width: `${Math.min(100, reviewer.active_reviews / reviewer.capacity * 100)}%` }} />
               </div>
-            ))}
-          </div>
+              <span className="load-value">{reviewer.active_reviews}/{reviewer.capacity}</span>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="surface submissions-surface">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Очередь</p>
-            <h2>Домашние работы</h2>
+            <h2>Очередь проверки</h2>
+            <p>Работы отсортированы по времени поступления.</p>
           </div>
         </div>
         {dashboard.submissions.length === 0 ? (
           <div className="empty-state">
-            <strong>Работ пока нет</strong>
-            <span>Здесь появятся решения, которые отправят студенты.</span>
+            <strong>Зарегистрированные работы отсутствуют</strong>
+            <span>Новые отправки будут добавлены в эту очередь.</span>
           </div>
         ) : (
           <div className="submission-table">
+            <div className="submission-table-head">
+              <span>Студент</span>
+              <span>Ревьюер</span>
+              <span>Статус</span>
+              <span>Балл <InfoTip text="Предварительная сумма по критериям, которые система смогла оценить." /></span>
+            </div>
             {dashboard.submissions.map((item) => (
               <button className="submission-row" type="button" key={item.id} onClick={() => onOpen(item.id)}>
                 <span className="submission-title">
-                  <strong>{item.title}</strong>
-                  <small>#{item.id} · до {formatDate(item.due_at)}</small>
+                  <strong>{studentNameFor(item)}</strong>
+                  <small>Отправка #{item.id} · срок ревью {formatDate(item.due_at)}</small>
                 </span>
                 <span>{item.reviewer?.name ?? "Не назначен"}</span>
                 <StatusBadge status={item.status} />
@@ -342,13 +384,16 @@ function CoordinatorView({
 }
 
 function GitHubSubmissionForm({
+  studentName,
+  onStudentNameChange,
   onCreated,
   onError
 }: {
+  studentName: string;
+  onStudentNameChange: (value: string) => void;
   onCreated: (item: Submission) => Promise<void>;
   onError: (message: string) => void;
 }) {
-  const [studentName, setStudentName] = useState("");
   const [repositoryUrl, setRepositoryUrl] = useState("");
   const [subdirectory, setSubdirectory] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -378,16 +423,16 @@ function GitHubSubmissionForm({
   return (
     <form className="student-submit-form" onSubmit={submit}>
       <label>
-        Ваше имя
+        <span className="field-label">Имя студента <InfoTip text="Имя используется для отображения работы в очереди ревьюера." /></span>
         <input
           required
           value={studentName}
           placeholder="Имя и фамилия"
-          onChange={(event) => setStudentName(event.target.value)}
+          onChange={(event) => onStudentNameChange(event.target.value)}
         />
       </label>
       <label>
-        Ссылка на репозиторий или Pull Request
+        <span className="field-label">GitHub-ссылка <InfoTip text="Укажите публичный репозиторий или Pull Request с решением текущей домашней работы." /></span>
         <input
           required
           type="url"
@@ -397,12 +442,12 @@ function GitHubSubmissionForm({
         />
       </label>
       <button className="primary" type="submit" disabled={submitting}>
-        {submitting ? "Отправляем…" : "Отправить на проверку"}
+        {submitting ? "Регистрация…" : "Передать на проверку"}
       </button>
       <details className="advanced-field">
-        <summary>Работа лежит в отдельной папке?</summary>
+        <summary>Дополнительные параметры</summary>
         <label>
-          Путь к папке
+          <span className="field-label">Путь к каталогу <InfoTip text="Заполните, если решение находится не в корне репозитория." /></span>
           <input
             value={subdirectory}
             placeholder="Например: homework"
@@ -414,69 +459,86 @@ function GitHubSubmissionForm({
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: number; tone: string }) {
+function Stat({ label, value, help }: { label: string; value: number; help: string }) {
   return (
-    <article className={`stat-card stat-${tone}`}>
-      <span>{label}</span>
+    <article className="stat-card">
+      <span>{label} <InfoTip text={help} /></span>
       <strong>{value}</strong>
     </article>
   );
 }
 
 function ReviewerView({
+  reviewers,
   submissions,
   selected,
   onOpen,
   onRefresh,
   onError
 }: {
+  reviewers: Reviewer[];
   submissions: Submission[];
   selected: Submission | null;
   onOpen: (id: number) => Promise<Submission>;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
 }) {
-  const queue = submissions.filter((item) => item.status !== "approved");
+  const [reviewerId, setReviewerId] = useState(reviewers[0]?.id ?? 0);
+  useEffect(() => {
+    if (selected?.reviewer?.id) setReviewerId(selected.reviewer.id);
+  }, [selected?.id, selected?.reviewer?.id]);
+  const queue = submissions.filter(
+    (item) => item.status !== "approved" && item.reviewer?.id === reviewerId
+  );
+  const visibleSelected = selected?.reviewer?.id === reviewerId ? selected : null;
   return (
     <main className="review-layout">
       <aside className="queue-panel">
-        <p className="eyebrow">Очередь ревьюера</p>
-        <h2>Работы</h2>
+        <h2>Очередь ревьюера</h2>
+        <label className="reviewer-select">
+          <span className="field-label">Ревьюер <InfoTip text="В демоверсии профиль выбирается вручную. В рабочей системе он определяется после входа." /></span>
+          <select value={reviewerId} onChange={(event) => setReviewerId(Number(event.target.value))}>
+            {reviewers.map((reviewer) => (
+              <option value={reviewer.id} key={reviewer.id}>{reviewer.name}</option>
+            ))}
+          </select>
+        </label>
+        <p className="aside-copy">Назначенные работы без подтверждённого результата: {queue.length}</p>
         <div className="queue-list">
-          {queue.length === 0 && <p className="muted">Нет работ на проверке.</p>}
+          {queue.length === 0 && <p className="muted">Назначенные работы отсутствуют.</p>}
           {queue.map((item) => (
             <button
               type="button"
-              className={selected?.id === item.id ? "queue-item active" : "queue-item"}
+              className={visibleSelected?.id === item.id ? "queue-item active" : "queue-item"}
               key={item.id}
               onClick={() => onOpen(item.id).catch((error: Error) => onError(error.message))}
             >
-              <strong>{item.title}</strong>
-              <span>{item.reviewer?.name}</span>
+              <strong>{studentNameFor(item)}</strong>
+              <span>Отправка #{item.id} · {formatDate(item.due_at)}</span>
               <StatusBadge status={item.status} />
             </button>
           ))}
         </div>
       </aside>
       <section className="review-content">
-        {!selected ? (
+        {!visibleSelected ? (
           <div className="empty-state tall">
-            <strong>Выберите работу</strong>
-            <span>Здесь появятся критерии, факты и предложения системы.</span>
+            <strong>Работа не выбрана</strong>
+            <span>Выберите запись из назначенной очереди.</span>
           </div>
-        ) : selected.status === "processing" || selected.status === "assigned" ? (
+        ) : visibleSelected.status === "processing" || visibleSelected.status === "assigned" ? (
           <div className="processing-state">
             <div className="spinner" />
-            <h1>Собираем материалы проверки</h1>
-            <p>Фиксируем версию работы, читаем структуру и проверяем критерии.</p>
+            <h1>Предварительная проверка выполняется</h1>
+            <p>Система фиксирует версию репозитория и проверяет критерии.</p>
           </div>
-        ) : selected.status === "error" ? (
+        ) : visibleSelected.status === "error" ? (
           <div className="error-state">
             <h1>Проверка не завершилась</h1>
-            <p>{selected.error_message}</p>
+            <p>{visibleSelected.error_message}</p>
           </div>
         ) : (
-          <ReviewDetail item={selected} onRefresh={onRefresh} onError={onError} />
+          <ReviewDetail item={visibleSelected} onRefresh={onRefresh} onError={onError} />
         )}
       </section>
     </main>
@@ -534,19 +596,20 @@ function ReviewDetail({
     <div className="review-page">
       <div className="review-heading">
         <div>
-          <p className="eyebrow">{activeHomework.course} · Работа #{item.id}</p>
-          <h1>{item.title}</h1>
+          <p className="eyebrow">{activeHomework.code} · Отправка #{item.id}</p>
+          <h1>{studentNameFor(item)}</h1>
+          <p className="review-assignment">{activeHomework.title}</p>
           <a href={item.repository_url} target="_blank" rel="noreferrer">Открыть в GitHub ↗</a>
         </div>
         <div className="review-total">
-          <span>Предложено</span>
+          <span>Предварительный результат <InfoTip text="Сумма предложенных баллов только по оценённым критериям. Итог определяет ревьюер." /></span>
           <strong>{item.suggested_points ?? 0}/{item.assessed_points ?? 0}</strong>
           <small>{item.unresolved_criteria} требуют решения</small>
         </div>
       </div>
 
       <div className="responsibility-note">
-        Итоговые баллы и комментарии подтверждает ревьюер. Предложения системы можно изменить.
+        Результат не опубликован. Проверьте критерии без оценки, при необходимости измените предложенные баллы и подтвердите итог.
       </div>
 
       {item.execution_check && (
@@ -605,7 +668,7 @@ function ReviewDetail({
                 </label>
                 <div className="criterion-meta">
                   <span className={`decision decision-${criterion.status}`}>
-                    {criterion.status === "needs_human" ? "Нужно проверить" : criterion.status === "pass" ? "Найдено" : "Не найдено"}
+                    {criterion.status === "needs_human" ? "Ручная проверка" : criterion.status === "pass" ? "Выполнен" : "Не выполнен"}
                   </span>
                   <span>{criterion.confidence === null ? "Без оценки уверенности" : `Уверенность ${Math.round(criterion.confidence * 100)}%`}</span>
                 </div>
@@ -620,8 +683,9 @@ function ReviewDetail({
 
       <section className="ai-signal">
         <div>
-          <p className="eyebrow">Признаки использования ИИ</p>
-          <h2>{item.ai_usage_signal.reasons.length ? "Есть основания для дополнительной проверки" : "Надёжный вывод сделать нельзя"}</h2>
+          <p className="eyebrow">Дополнительная проверка</p>
+          <h2>Признаки использования генеративного ИИ</h2>
+          <p className="signal-result">{item.ai_usage_signal.reasons.length ? "Обнаружены основания для ручной проверки." : "Достаточных оснований для вывода нет."}</p>
           <p>{item.ai_usage_signal.limitations}</p>
           {item.ai_usage_signal.reasons.length > 0 && (
             <ul>
@@ -659,22 +723,42 @@ function StudentView({
   onCreated: (item: Submission) => Promise<void>;
   onError: (message: string) => void;
 }) {
-  const item = selected;
+  const [studentName, setStudentName] = useState("");
+  const normalizedName = studentName.trim().toLocaleLowerCase("ru-RU");
+  const studentSubmissions = normalizedName
+    ? submissions.filter((submission) => studentNameFor(submission).toLocaleLowerCase("ru-RU") === normalizedName)
+    : [];
+  const item = selected && studentSubmissions.some((submission) => submission.id === selected.id)
+    ? selected
+    : null;
   return (
     <main className="student-page">
-      <section className="homework-hero surface">
+      <section className="assignment-detail surface">
         <div className="homework-main">
-          <p className="eyebrow">{activeHomework.course}</p>
+          <p className="context-line">{activeHomework.course} · {activeHomework.code}</p>
           <h1>{activeHomework.title}</h1>
-          <p>{activeHomework.summary}</p>
-          <div className="homework-meta">
-            <span>100 баллов</span>
-            <span>Сдача через GitHub</span>
-            <span>Итог подтверждает ревьюер</span>
+          <p className="assignment-description">{activeHomework.summary}</p>
+          <div className="assignment-properties">
+            <div>
+              <span>Срок сдачи <InfoTip text="После указанного времени работа считается отправленной с опозданием." /></span>
+              <strong>{activeHomework.deadline}</strong>
+            </div>
+            <div>
+              <span>Максимальный балл <InfoTip text="Сумма максимальных баллов по всем критериям." /></span>
+              <strong>100</strong>
+            </div>
+            <div>
+              <span>Способ сдачи <InfoTip text="Допускается ссылка на репозиторий или Pull Request в GitHub." /></span>
+              <strong>GitHub</strong>
+            </div>
+            <div>
+              <span>Итоговое решение <InfoTip text="Система формирует предварительный результат; итог подтверждает назначенный ревьюер." /></span>
+              <strong>Ревьюер</strong>
+            </div>
           </div>
         </div>
         <div className="rubric-preview">
-          <p className="eyebrow">Как оценивается</p>
+          <h2>Разделы оценки</h2>
           {activeHomework.sections.map((section) => (
             <div key={section.title}>
               <span>{section.title}</span>
@@ -686,20 +770,28 @@ function StudentView({
       <section className="surface student-submit">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Ваша работа</p>
-            <h2>Отправить решение</h2>
-            <p className="section-copy">Укажите репозиторий с этой домашней работой. Мы зафиксируем текущий коммит и начнём предварительную проверку.</p>
+            <h2>Сдача работы</h2>
+            <p>Укажите имя и ссылку на репозиторий. После отправки система зафиксирует текущий коммит и создаст запись на проверку.</p>
           </div>
         </div>
-        <GitHubSubmissionForm onCreated={onCreated} onError={onError} />
+        <GitHubSubmissionForm
+          studentName={studentName}
+          onStudentNameChange={setStudentName}
+          onCreated={onCreated}
+          onError={onError}
+        />
       </section>
       <div className="student-grid">
         <aside className="surface student-list">
-          <h2>Мои работы</h2>
-          {submissions.length === 0 && <p className="muted">Вы ещё ничего не отправляли.</p>}
-          {submissions.map((submission) => (
+          <h2>Мои отправки</h2>
+          {!normalizedName && <p className="muted">Укажите имя в форме сдачи, чтобы отобразить связанные работы.</p>}
+          {normalizedName && studentSubmissions.length === 0 && <p className="muted">Связанные работы отсутствуют.</p>}
+          {studentSubmissions.map((submission) => (
             <button type="button" key={submission.id} onClick={() => onOpen(submission.id).catch((error: Error) => onError(error.message))}>
-              <strong>{submission.title}</strong>
+              <span>
+                <strong>Отправка #{submission.id}</strong>
+                <small>{formatDate(submission.created_at)}</small>
+              </span>
               <StatusBadge status={submission.status} />
             </button>
           ))}
@@ -707,25 +799,26 @@ function StudentView({
         <section className="surface student-result">
           {!item ? (
             <div className="empty-state tall">
-              <strong>Выберите работу</strong>
-              <span>Здесь появятся статус и подтверждённый результат.</span>
+              <strong>Работа не выбрана</strong>
+              <span>Выберите отправленную работу для просмотра статуса.</span>
             </div>
           ) : item.status !== "approved" ? (
             <div className="student-progress">
-              <p className="eyebrow">Работа #{item.id}</p>
-              <h2>{item.title}</h2>
+              <p className="eyebrow">Отправка #{item.id}</p>
+              <h2>{activeHomework.title}</h2>
               <StatusBadge status={item.status} />
               <dl>
                 <div><dt>Ревьюер</dt><dd>{item.reviewer?.name ?? "Назначается"}</dd></div>
                 <div><dt>Срок проверки</dt><dd>{formatDate(item.due_at)}</dd></div>
+                <div><dt>Версия <InfoTip text="Коммит GitHub, зафиксированный системой при отправке." /></dt><dd>{item.commit_sha ? item.commit_sha.slice(0, 8) : "Фиксируется"}</dd></div>
                 <div><dt>Источник</dt><dd><a href={item.repository_url} target="_blank" rel="noreferrer">GitHub ↗</a></dd></div>
               </dl>
-              <p className="muted">Итог появится здесь после подтверждения ревьюером.</p>
+              <p className="muted">Итоговый результат будет доступен после подтверждения ревьюером.</p>
             </div>
           ) : (
             <>
               <p className="eyebrow">Итог</p>
-              <h2>{item.title}</h2>
+              <h2>{activeHomework.title}</h2>
               <div className="student-score">{item.confirmed_points}/{item.max_points}</div>
               {item.criteria.filter((criterion) => (criterion.final_points ?? 0) < criterion.max_points).map((criterion) => (
                 <article key={criterion.id}>
