@@ -49,7 +49,7 @@ type Submission = {
   ai_usage_signal: {
     status: string;
     confidence: number | null;
-    reasons: string[];
+    reasons: Array<{ description: string; evidence_refs: string[] }>;
     limitations: string;
   };
   events: Array<{ id: number; kind: string; message: string; created_at: string }>;
@@ -448,6 +448,13 @@ function ReviewDetail({
 }) {
   const [savingId, setSavingId] = useState<number | null>(null);
   const sections = Array.from(new Set(item.criteria.map((criterion) => criterion.section)));
+  const signalLabel = {
+    low: "Низкий сигнал",
+    medium: "Средний сигнал",
+    high: "Высокий сигнал",
+    insufficient_data: "Недостаточно данных",
+    needs_review: "Нужно проверить"
+  }[item.ai_usage_signal.status] ?? "Нужно проверить";
 
   const saveCriterion = async (criterion: Criterion, form: HTMLFormElement) => {
     const data = new FormData(form);
@@ -555,10 +562,19 @@ function ReviewDetail({
       <section className="ai-signal">
         <div>
           <p className="eyebrow">Признаки использования ИИ</p>
-          <h2>Решение принимает ревьюер</h2>
+          <h2>{item.ai_usage_signal.reasons.length ? "Есть основания для дополнительной проверки" : "Надёжный вывод сделать нельзя"}</h2>
           <p>{item.ai_usage_signal.limitations}</p>
+          {item.ai_usage_signal.reasons.length > 0 && (
+            <ul>
+              {item.ai_usage_signal.reasons.map((reason) => (
+                <li key={`${reason.description}-${reason.evidence_refs.join("-")}`}>
+                  {reason.description}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        <span className="status status-human">Требуется проверка</span>
+        <span className="status status-human">{signalLabel}</span>
       </section>
 
       <div className="review-actions">

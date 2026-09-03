@@ -32,6 +32,7 @@ def submission_payload(submission: Submission, *, include_details: bool = True) 
     criteria = [criterion_payload(item) for item in submission.criteria] if include_details else []
     confirmed_points = sum((item.final_points or 0) for item in submission.criteria)
     unresolved = sum(item.final_points is None for item in submission.criteria)
+    ai_assessment = submission.ai_usage_assessment
     return {
         "id": submission.id,
         "title": submission.title,
@@ -57,12 +58,39 @@ def submission_payload(submission: Submission, *, include_details: bool = True) 
         "due_at": iso(submission.due_at),
         "approved_at": iso(submission.approved_at),
         "criteria": criteria,
-        "ai_usage_signal": {
-            "status": "needs_review",
-            "confidence": None,
-            "reasons": [],
-            "limitations": "Сигнал не влияет на баллы и требует отдельного решения ревьюера.",
-        },
+        "ai_usage_signal": (
+            {
+                "status": ai_assessment.status,
+                "confidence": ai_assessment.confidence,
+                "reasons": json.loads(ai_assessment.reasons_json or "[]"),
+                "limitations": ai_assessment.limitations,
+                "model_version": ai_assessment.model_version,
+            }
+            if ai_assessment
+            else {
+                "status": "needs_review",
+                "confidence": None,
+                "reasons": [],
+                "limitations": "Сигнал не влияет на баллы и требует отдельного решения ревьюера.",
+                "model_version": None,
+            }
+        ),
+        "model_runs": (
+            [
+                {
+                    "provider": run.provider,
+                    "model": run.model,
+                    "status": run.status,
+                    "prompt_tokens": run.prompt_tokens,
+                    "completion_tokens": run.completion_tokens,
+                    "error_type": run.error_type,
+                    "created_at": iso(run.created_at),
+                }
+                for run in submission.model_runs
+            ]
+            if include_details
+            else []
+        ),
         "events": (
             [
                 {

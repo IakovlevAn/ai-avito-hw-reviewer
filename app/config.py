@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     github_max_total_bytes: int = 800_000
     telegram_bot_token: str | None = None
     telegram_default_chat_id: str | None = None
+    yandex_gpt_enabled: bool = False
+    yandex_gpt_folder_id: str = ""
+    yandex_gpt_model: str = "yandexgpt-lite"
+    yandex_gpt_critic_model: str = "yandexgpt"
+    yandex_gpt_timeout_seconds: float = 25.0
+    yandex_gpt_max_input_chars: int = 24_000
+    yandex_cloud_iam_token: str | None = None
     review_due_hours: int = 48
     web_dist_dir: Path = Path("web/dist")
 

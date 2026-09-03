@@ -58,6 +58,16 @@ class Submission(Base):
         cascade="all, delete-orphan",
         order_by="AuditEvent.created_at",
     )
+    ai_usage_assessment: Mapped[Optional[AiUsageAssessment]] = relationship(
+        back_populates="submission",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    model_runs: Mapped[list[ModelRun]] = relationship(
+        back_populates="submission",
+        cascade="all, delete-orphan",
+        order_by="ModelRun.created_at",
+    )
 
 
 class CriterionResult(Base):
@@ -93,3 +103,33 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     submission: Mapped[Submission] = relationship(back_populates="events")
+
+
+class AiUsageAssessment(Base):
+    __tablename__ = "ai_usage_assessments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="insufficient_data")
+    confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    reasons_json: Mapped[str] = mapped_column(Text, default="[]")
+    limitations: Mapped[str] = mapped_column(Text, default="")
+    model_version: Mapped[str] = mapped_column(String(160), default="")
+
+    submission: Mapped[Submission] = relationship(back_populates="ai_usage_assessment")
+
+
+class ModelRun(Base):
+    __tablename__ = "model_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(60), default="yandex_cloud")
+    model: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(40))
+    prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_type: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    submission: Mapped[Submission] = relationship(back_populates="model_runs")

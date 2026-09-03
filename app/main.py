@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -14,12 +15,21 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
 from app.database import SessionLocal, create_schema, get_session
-from app.models import AuditEvent, CriterionResult, Reviewer, Submission, utcnow
+from app.models import (
+    AiUsageAssessment,
+    AuditEvent,
+    CriterionResult,
+    ModelRun,
+    Reviewer,
+    Submission,
+    utcnow,
+)
 from app.presenters import submission_payload
 from app.rubric import RUBRIC, TOTAL_POINTS
 from app.services.assignment import ACTIVE_STATUSES, choose_reviewer, seed_reviewers
 from app.services.export import build_submission_workbook
 from app.services.github import GitHubClient, parse_github_url
+from app.services.llm_review import review_with_yandex_gpt
 from app.services.notifications import send_telegram
 from app.services.review import evaluate, evidence_json
 
@@ -66,6 +76,8 @@ def get_submission_or_404(session: Session, submission_id: int) -> Submission:
             selectinload(Submission.reviewer),
             selectinload(Submission.criteria),
             selectinload(Submission.events),
+            selectinload(Submission.ai_usage_assessment),
+            selectinload(Submission.model_runs),
         )
     )
     if item is None:
@@ -87,6 +99,14 @@ async def process_submission(submission_id: int) -> None:
 
         snapshot = await GitHubClient(settings).fetch_snapshot(location, submission.subdirectory)
         findings = evaluate(snapshot)
+        model_result = None
+        model_error_type = None
+        if settings.yandex_gpt_enabled:
+            try:
+                model_result = await review_with_yandex_gpt(snapshot, findings, settings)
+                findings = model_result.findings
+            except Exception as exc:  # noqa: BLE001 - deterministic review remains available
+                model_error_type = type(exc).__name__
 
         with SessionLocal() as session:
             submission = session.get(Submission, submission_id)
@@ -117,6 +137,67 @@ async def process_submission(submission_id: int) -> None:
             submission.assessed_points = sum(finding.criterion.max_points for finding in assessed)
             submission.max_points = TOTAL_POINTS
             submission.status = "review_ready"
+            if model_result:
+                signal = model_result.ai_usage_signal
+                submission.ai_usage_assessment = AiUsageAssessment(
+                    status=signal.status,
+                    confidence=signal.confidence,
+                    reasons_json=json.dumps(
+                        [reason.model_dump() for reason in signal.reasons],
+                        ensure_ascii=False,
+                    ),
+                    limitations=signal.limitations,
+                    model_version=model_result.model,
+                )
+                submission.model_runs.append(
+                    ModelRun(
+                        model=model_result.model,
+                        status="success",
+                        prompt_tokens=model_result.prompt_tokens,
+                        completion_tokens=model_result.completion_tokens,
+                    )
+                )
+                if model_result.critic_model:
+                    submission.model_runs.append(
+                        ModelRun(
+                            model=model_result.critic_model,
+                            status="error" if model_result.critic_error_type else "success",
+                            prompt_tokens=model_result.critic_prompt_tokens,
+                            completion_tokens=model_result.critic_completion_tokens,
+                            error_type=model_result.critic_error_type,
+                        )
+                    )
+                submission.events.append(
+                    AuditEvent(
+                        kind="model_review_completed",
+                        message=(
+                            "Модельная проверка и критика завершены"
+                            if not model_result.critic_error_type
+                            else "Модельная проверка завершена; критик недоступен"
+                        ),
+                    )
+                )
+            elif settings.yandex_gpt_enabled:
+                submission.ai_usage_assessment = AiUsageAssessment(
+                    status="insufficient_data",
+                    confidence=None,
+                    reasons_json="[]",
+                    limitations=(
+                        "Модельная проверка не завершилась. Баллы по формальным критериям сохранены, "
+                        "остальные критерии переданы ревьюеру."
+                    ),
+                    model_version=settings.yandex_gpt_model,
+                )
+                submission.model_runs.append(
+                    ModelRun(
+                        model=settings.yandex_gpt_model,
+                        status="error",
+                        error_type=model_error_type,
+                    )
+                )
+                submission.events.append(
+                    AuditEvent(kind="model_review_fallback", message="Использован результат без модели")
+                )
             submission.events.append(
                 AuditEvent(
                     kind="review_ready",
@@ -152,7 +233,11 @@ def dashboard(session: Session = Depends(get_session)) -> dict:
     submissions = list(
         session.scalars(
             select(Submission)
-            .options(selectinload(Submission.reviewer), selectinload(Submission.criteria))
+            .options(
+                selectinload(Submission.reviewer),
+                selectinload(Submission.criteria),
+                selectinload(Submission.ai_usage_assessment),
+            )
             .order_by(Submission.created_at.desc())
         )
     )

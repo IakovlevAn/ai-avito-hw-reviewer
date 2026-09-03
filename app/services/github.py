@@ -24,6 +24,14 @@ class GitHubLocation:
 
 
 @dataclass(frozen=True)
+class CommitSummary:
+    sha: str
+    authored_at: str
+    message: str
+    author: str | None
+
+
+@dataclass(frozen=True)
 class RepositorySnapshot:
     owner: str
     repository: str
@@ -31,6 +39,7 @@ class RepositorySnapshot:
     commit_sha: str
     files: dict[str, str]
     all_paths: tuple[str, ...]
+    commit_history: tuple[CommitSummary, ...] = ()
 
 
 def parse_github_url(value: str) -> GitHubLocation:
@@ -101,6 +110,28 @@ class GitHubClient:
             self._raise(tree_response, "Не удалось прочитать структуру репозитория")
             tree = tree_response.json().get("tree", [])
 
+            history_params: dict[str, str | int] = {"sha": commit_sha, "per_page": 30}
+            if subdirectory.strip("/"):
+                history_params["path"] = subdirectory.strip("/")
+            history_response = await client.get(
+                f"/repos/{location.owner}/{location.repository}/commits",
+                params=history_params,
+            )
+            history: list[CommitSummary] = []
+            if history_response.status_code == 200:
+                for item in history_response.json():
+                    commit = item.get("commit") or {}
+                    author_data = commit.get("author") or {}
+                    github_author = item.get("author") or {}
+                    history.append(
+                        CommitSummary(
+                            sha=str(item.get("sha", "")),
+                            authored_at=str(author_data.get("date", "")),
+                            message=str(commit.get("message", ""))[:500],
+                            author=github_author.get("login") or author_data.get("name"),
+                        )
+                    )
+
         normalized_prefix = subdirectory.strip("/")
         all_paths: list[str] = []
         candidates: list[tuple[str, int]] = []
@@ -163,6 +194,7 @@ class GitHubClient:
             commit_sha=commit_sha,
             files=files,
             all_paths=tuple(sorted(all_paths)),
+            commit_history=tuple(history),
         )
 
     @staticmethod
