@@ -128,7 +128,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function InfoTip({ text }: { text: string }) {
   return (
-    <span className="info-tip" tabIndex={0} data-tooltip={text} title={text} aria-label={text}>i</span>
+    <span className="info-tip" tabIndex={0} data-tooltip={text} aria-label={text}>?</span>
   );
 }
 
