@@ -68,6 +68,11 @@ class Submission(Base):
         cascade="all, delete-orphan",
         order_by="ModelRun.created_at",
     )
+    execution_check: Mapped[Optional[ExecutionCheck]] = relationship(
+        back_populates="submission",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class CriterionResult(Base):
@@ -133,3 +138,20 @@ class ModelRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     submission: Mapped[Submission] = relationship(back_populates="model_runs")
+
+
+class ExecutionCheck(Base):
+    __tablename__ = "execution_checks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("submissions.id"), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(40))
+    go_version: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    dependencies_ok: Mapped[Optional[bool]] = mapped_column(nullable=True)
+    tests_ok: Mapped[Optional[bool]] = mapped_column(nullable=True)
+    vet_ok: Mapped[Optional[bool]] = mapped_column(nullable=True)
+    has_tests: Mapped[bool] = mapped_column(default=False)
+    duration_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    output_summary: Mapped[str] = mapped_column(Text, default="")
+
+    submission: Mapped[Submission] = relationship(back_populates="execution_check")

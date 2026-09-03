@@ -33,6 +33,7 @@ def submission_payload(submission: Submission, *, include_details: bool = True) 
     confirmed_points = sum((item.final_points or 0) for item in submission.criteria)
     unresolved = sum(item.final_points is None for item in submission.criteria)
     ai_assessment = submission.ai_usage_assessment
+    execution = submission.execution_check
     return {
         "id": submission.id,
         "title": submission.title,
@@ -90,6 +91,20 @@ def submission_payload(submission: Submission, *, include_details: bool = True) 
             ]
             if include_details
             else []
+        ),
+        "execution_check": (
+            {
+                "status": execution.status,
+                "go_version": execution.go_version,
+                "dependencies_ok": execution.dependencies_ok,
+                "tests_ok": execution.tests_ok,
+                "vet_ok": execution.vet_ok,
+                "has_tests": execution.has_tests,
+                "duration_seconds": execution.duration_seconds,
+                "output_summary": execution.output_summary,
+            }
+            if execution
+            else None
         ),
         "events": (
             [

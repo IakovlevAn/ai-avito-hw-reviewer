@@ -46,6 +46,7 @@ button { cursor: pointer; }
 .stat-red { background: #fff0f2; }
 
 .two-column { display: grid; grid-template-columns: 1.08fr .92fr; gap: 18px; margin-bottom: 18px; }
+.coordinator-reviewers { margin-bottom: 18px; }
 .surface { background: #fff; border: 1px solid #e9e3db; border-radius: 24px; padding: 26px; box-shadow: 0 12px 40px rgba(31,32,35,.045); }
 .section-heading { display: flex; align-items: start; justify-content: space-between; margin-bottom: 24px; }
 .section-heading h2, .surface h2 { margin: 5px 0 0; font-size: 26px; letter-spacing: -.03em; }
@@ -99,6 +100,11 @@ textarea { min-height: 90px; resize: vertical; }
 .review-total span, .review-total small { color: #64666d; }
 .review-total strong { font-size: 32px; }
 .responsibility-note { padding: 16px 18px; border-radius: 14px; background: #f1eaff; margin-bottom: 34px; font-weight: 650; }
+.execution-summary { display: grid; grid-template-columns: 1.1fr repeat(4, .8fr); gap: 12px; align-items: center; padding: 18px; border: 1px solid #e5e0d9; border-radius: 18px; background: #fff; }
+.execution-summary h2 { margin: 4px 0 0; }
+.execution-summary > div:not(:first-child) { display: grid; gap: 4px; }
+.execution-summary span { color: #7a7c82; font-size: 12px; }
+.execution-summary strong { font-size: 15px; }
 .criteria-section { margin-top: 38px; }
 .criteria-section > h2 { margin-bottom: 16px; font-size: 25px; }
 .criterion-card { display: grid; grid-template-columns: 1fr 320px; gap: 22px; padding: 22px 0; border-top: 1px solid #e5e0d9; }
@@ -120,15 +126,28 @@ details summary { cursor: pointer; font-weight: 700; }
 .review-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 28px; }
 
 .student-grid { display: grid; grid-template-columns: 320px 1fr; gap: 18px; }
+.student-submit { margin-bottom: 18px; }
+.student-submit-form { display: grid; grid-template-columns: 1.5fr 1fr auto; gap: 14px; align-items: end; }
+.student-submit-form .primary { min-height: 45px; }
+.advanced-field { align-self: end; padding: 11px 14px; border: 1px solid #ddd7cf; border-radius: 12px; background: #fcfbf8; }
+.advanced-field summary { cursor: pointer; font-size: 14px; font-weight: 700; }
+.advanced-field[open] { padding-bottom: 14px; }
+.advanced-field[open] summary { margin-bottom: 12px; }
 .student-list { display: grid; align-content: start; gap: 10px; }
 .student-list button { display: flex; justify-content: space-between; gap: 12px; border: 0; border-top: 1px solid #eee9e3; background: transparent; padding: 14px 0; text-align: left; }
-.student-list button span { color: #0089d6; font-weight: 800; }
+.student-list button > span:not(.status) { color: #0089d6; font-weight: 800; }
 .student-result { min-height: 460px; }
 .student-result h2 { font-size: 34px; }
 .student-score { font-size: 64px; font-weight: 850; color: #168a5b; margin: 24px 0; }
 .student-result article { position: relative; padding: 18px 70px 18px 0; border-top: 1px solid #eee9e3; }
 .student-result article span { position: absolute; top: 18px; right: 0; font-weight: 800; }
 .student-result article p { color: #62646a; line-height: 1.5; }
+.student-progress h2 { margin-bottom: 18px; }
+.student-progress dl { display: grid; gap: 14px; margin: 28px 0; }
+.student-progress dl div { display: grid; grid-template-columns: 140px 1fr; gap: 18px; border-top: 1px solid #eee9e3; padding-top: 14px; }
+.student-progress dt { color: #7a7c82; }
+.student-progress dd { margin: 0; font-weight: 700; }
+.student-progress a { color: #0089d6; text-decoration: none; }
 
 .empty-state, .processing-state, .error-state { display: grid; place-items: center; text-align: center; gap: 8px; min-height: 170px; color: #777980; }
 .empty-state strong { color: #1f2023; }
@@ -147,11 +166,14 @@ details summary { cursor: pointer; font-weight: 700; }
 @media (max-width: 900px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .two-column, .student-grid { grid-template-columns: 1fr; }
+  .student-submit-form { grid-template-columns: 1fr; }
   .review-layout { grid-template-columns: 1fr; }
   .queue-panel { border-right: 0; border-bottom: 1px solid #e4dfd8; }
   .queue-list { display: flex; overflow-x: auto; }
   .queue-item { min-width: 220px; }
   .criterion-card { grid-template-columns: 1fr; }
+  .execution-summary { grid-template-columns: repeat(2, 1fr); }
+  .execution-summary > div:first-child { grid-column: 1 / -1; }
 }
 
 @media (max-width: 640px) {

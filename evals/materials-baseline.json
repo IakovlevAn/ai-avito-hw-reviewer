@@ -1,0 +1,65 @@
+{
+  "run_date": "2026-09-03",
+  "rubric_points": 100,
+  "pipeline": ["yandexgpt-lite", "yandexgpt-critic"],
+  "samples": [
+    {
+      "label": "good",
+      "build": "pass",
+      "vet": "pass",
+      "has_tests": false,
+      "sections": {
+        "foundation": {"suggested": 28, "max": 30, "needs_human": 2},
+        "data_api": {"suggested": 38, "max": 40, "needs_human": 2},
+        "architecture": {"suggested": 23, "max": 30, "needs_human": 5}
+      },
+      "suggested_points": 89,
+      "assessed_points": 91,
+      "tokens": {
+        "reviewer_prompt": 11147,
+        "reviewer_completion": 312,
+        "critic_prompt": 12350,
+        "critic_completion": 1532
+      }
+    },
+    {
+      "label": "medium",
+      "build": "pass",
+      "vet": "pass",
+      "has_tests": false,
+      "sections": {
+        "foundation": {"suggested": 18, "max": 30, "needs_human": 0},
+        "data_api": {"suggested": 2, "max": 40, "needs_human": 0},
+        "architecture": {"suggested": 5, "max": 30, "needs_human": 0}
+      },
+      "suggested_points": 25,
+      "assessed_points": 100,
+      "tokens": {
+        "reviewer_prompt": 1083,
+        "reviewer_completion": 293,
+        "critic_prompt": 1411,
+        "critic_completion": 565
+      }
+    },
+    {
+      "label": "weak",
+      "build": "pass",
+      "vet": "pass",
+      "has_tests": false,
+      "sections": {
+        "foundation": {"suggested": 29, "max": 30, "needs_human": 0},
+        "data_api": {"suggested": 10, "max": 40, "needs_human": 0},
+        "architecture": {"suggested": 21, "max": 30, "needs_human": 0}
+      },
+      "suggested_points": 60,
+      "assessed_points": 100,
+      "tokens": {
+        "reviewer_prompt": 7947,
+        "reviewer_completion": 257,
+        "critic_prompt": 8780,
+        "critic_completion": 1145
+      }
+    }
+  ],
+  "conclusion": "The total score mixes implementation coverage and code quality; section-level reporting and a manual gold standard are required before calibration."
+}

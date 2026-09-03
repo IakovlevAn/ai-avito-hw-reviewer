@@ -19,6 +19,7 @@ from app.models import (
     AiUsageAssessment,
     AuditEvent,
     CriterionResult,
+    ExecutionCheck,
     ModelRun,
     Reviewer,
     Submission,
@@ -29,6 +30,7 @@ from app.rubric import RUBRIC, TOTAL_POINTS
 from app.services.assignment import ACTIVE_STATUSES, choose_reviewer, seed_reviewers
 from app.services.export import build_submission_workbook
 from app.services.github import GitHubClient, parse_github_url
+from app.services.go_runner import apply_execution_result, run_go_checks
 from app.services.llm_review import review_with_yandex_gpt
 from app.services.notifications import send_telegram
 from app.services.review import evaluate, evidence_json
@@ -78,6 +80,7 @@ def get_submission_or_404(session: Session, submission_id: int) -> Submission:
             selectinload(Submission.events),
             selectinload(Submission.ai_usage_assessment),
             selectinload(Submission.model_runs),
+            selectinload(Submission.execution_check),
         )
     )
     if item is None:
@@ -99,6 +102,22 @@ async def process_submission(submission_id: int) -> None:
 
         snapshot = await GitHubClient(settings).fetch_snapshot(location, submission.subdirectory)
         findings = evaluate(snapshot)
+        execution_result = None
+        if settings.go_runner_enabled:
+            try:
+                execution_result = await run_go_checks(snapshot, settings)
+                findings = apply_execution_result(findings, execution_result)
+            except Exception as exc:  # noqa: BLE001 - execution is optional evidence
+                with SessionLocal() as session:
+                    submission = session.get(Submission, submission_id)
+                    if submission is not None:
+                        submission.events.append(
+                            AuditEvent(
+                                kind="execution_fallback",
+                                message=f"Изолированная проверка недоступна: {type(exc).__name__}",
+                            )
+                        )
+                        session.commit()
         model_result = None
         model_error_type = None
         if settings.yandex_gpt_enabled:
@@ -137,6 +156,20 @@ async def process_submission(submission_id: int) -> None:
             submission.assessed_points = sum(finding.criterion.max_points for finding in assessed)
             submission.max_points = TOTAL_POINTS
             submission.status = "review_ready"
+            if execution_result:
+                submission.execution_check = ExecutionCheck(
+                    status=execution_result.status,
+                    go_version=execution_result.go_version,
+                    dependencies_ok=execution_result.dependencies_ok,
+                    tests_ok=execution_result.tests_ok,
+                    vet_ok=execution_result.vet_ok,
+                    has_tests=execution_result.has_tests,
+                    duration_seconds=execution_result.duration_seconds,
+                    output_summary=execution_result.output_summary,
+                )
+                submission.events.append(
+                    AuditEvent(kind="execution_completed", message=execution_result.output_summary[:500])
+                )
             if model_result:
                 signal = model_result.ai_usage_signal
                 submission.ai_usage_assessment = AiUsageAssessment(
@@ -237,6 +270,7 @@ def dashboard(session: Session = Depends(get_session)) -> dict:
                 selectinload(Submission.reviewer),
                 selectinload(Submission.criteria),
                 selectinload(Submission.ai_usage_assessment),
+                selectinload(Submission.execution_check),
             )
             .order_by(Submission.created_at.desc())
         )

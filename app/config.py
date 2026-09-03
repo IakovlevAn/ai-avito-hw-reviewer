@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     yandex_gpt_timeout_seconds: float = 25.0
     yandex_gpt_max_input_chars: int = 24_000
     yandex_cloud_iam_token: str | None = None
+    go_runner_enabled: bool = False
+    go_runner_timeout_seconds: float = 120.0
+    go_runner_cache_dir: Path = Path("data/go-mod-cache")
+    go_runner_build_cache_dir: Path = Path("data/go-build-cache")
     review_due_hours: int = 48
     web_dist_dir: Path = Path("web/dist")
 

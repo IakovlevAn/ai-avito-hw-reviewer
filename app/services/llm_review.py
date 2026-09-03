@@ -411,7 +411,11 @@ async def review_with_yandex_gpt(
                 "current_evidence": list(finding.evidence),
             }
             for finding in enriched
-            if finding.suggested_points is not None and finding.suggested_points > 0
+            if (
+                finding.suggested_points is not None
+                and finding.suggested_points > 0
+                and finding.criterion.code != "architecture.works"
+            )
         ]
         critic_error_type = None
         critic_usage: dict = {}

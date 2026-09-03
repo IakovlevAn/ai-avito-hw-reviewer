@@ -53,6 +53,16 @@ type Submission = {
     limitations: string;
   };
   events: Array<{ id: number; kind: string; message: string; created_at: string }>;
+  execution_check: {
+    status: string;
+    go_version: string | null;
+    dependencies_ok: boolean | null;
+    tests_ok: boolean | null;
+    vet_ok: boolean | null;
+    has_tests: boolean;
+    duration_seconds: number | null;
+    output_summary: string;
+  } | null;
 };
 
 type Dashboard = {
@@ -196,15 +206,10 @@ function App() {
       ) : role === "coordinator" ? (
         <CoordinatorView
           dashboard={dashboard!}
-          onCreated={async (item) => {
-            setSelected(item);
-            await loadDashboard();
-          }}
           onOpen={async (id) => {
             await openSubmission(id);
             setRole("reviewer");
           }}
-          onError={setMessage}
         />
       ) : role === "reviewer" ? (
         <ReviewerView
@@ -219,6 +224,10 @@ function App() {
           submissions={dashboard!.submissions}
           selected={selected}
           onOpen={openSubmission}
+          onCreated={async (item) => {
+            setSelected(item);
+            await loadDashboard();
+          }}
           onError={setMessage}
         />
       )}
@@ -228,44 +237,18 @@ function App() {
 
 function CoordinatorView({
   dashboard,
-  onCreated,
-  onOpen,
-  onError
+  onOpen
 }: {
   dashboard: Dashboard;
-  onCreated: (item: Submission) => Promise<void>;
   onOpen: (id: number) => Promise<void>;
-  onError: (message: string) => void;
 }) {
-  const [repositoryUrl, setRepositoryUrl] = useState("");
-  const [subdirectory, setSubdirectory] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    setSubmitting(true);
-    try {
-      const item = await request<Submission>("/api/submissions", {
-        method: "POST",
-        body: JSON.stringify({ repository_url: repositoryUrl, subdirectory })
-      });
-      setRepositoryUrl("");
-      setSubdirectory("");
-      await onCreated(item);
-    } catch (error) {
-      onError((error as Error).message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <main className="workspace">
       <section className="page-heading">
         <div>
           <p className="eyebrow">Рабочее пространство координатора</p>
           <h1>Проверки без ручной очереди</h1>
-          <p>Добавьте GitHub-работу — система назначит свободного ревьюера и подготовит проверку.</p>
+          <p>Студенты отправляют работы через GitHub. Здесь видны очередь, сроки и загрузка ревьюеров.</p>
         </div>
       </section>
 
@@ -276,40 +259,7 @@ function CoordinatorView({
         <Stat label="Просрочены" value={dashboard.stats.overdue} tone="red" />
       </section>
 
-      <div className="two-column">
-        <section className="surface submission-form">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Новая работа</p>
-              <h2>Получить из GitHub</h2>
-            </div>
-          </div>
-          <form onSubmit={submit}>
-            <label>
-              Ссылка на репозиторий или Pull Request
-              <input
-                required
-                type="url"
-                value={repositoryUrl}
-                placeholder="https://github.com/owner/repository"
-                onChange={(event) => setRepositoryUrl(event.target.value)}
-              />
-            </label>
-            <label>
-              Папка с решением <span>необязательно</span>
-              <input
-                value={subdirectory}
-                placeholder="Например: GO/Хорошее решение"
-                onChange={(event) => setSubdirectory(event.target.value)}
-              />
-            </label>
-            <button className="primary" type="submit" disabled={submitting}>
-              {submitting ? "Добавляем…" : "Добавить работу"}
-            </button>
-          </form>
-        </section>
-
-        <section className="surface">
+      <section className="surface coordinator-reviewers">
           <div className="section-heading">
             <div>
               <p className="eyebrow">Команда проверки</p>
@@ -331,8 +281,7 @@ function CoordinatorView({
               </div>
             ))}
           </div>
-        </section>
-      </div>
+      </section>
 
       <section className="surface submissions-surface">
         <div className="section-heading">
@@ -365,6 +314,65 @@ function CoordinatorView({
         )}
       </section>
     </main>
+  );
+}
+
+function GitHubSubmissionForm({
+  onCreated,
+  onError
+}: {
+  onCreated: (item: Submission) => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [repositoryUrl, setRepositoryUrl] = useState("");
+  const [subdirectory, setSubdirectory] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setSubmitting(true);
+    try {
+      const item = await request<Submission>("/api/submissions", {
+        method: "POST",
+        body: JSON.stringify({ repository_url: repositoryUrl, subdirectory })
+      });
+      setRepositoryUrl("");
+      setSubdirectory("");
+      await onCreated(item);
+    } catch (error) {
+      onError((error as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form className="student-submit-form" onSubmit={submit}>
+      <label>
+        Ссылка на репозиторий или Pull Request
+        <input
+          required
+          type="url"
+          value={repositoryUrl}
+          placeholder="https://github.com/owner/repository"
+          onChange={(event) => setRepositoryUrl(event.target.value)}
+        />
+      </label>
+      <details className="advanced-field">
+        <summary>Работа лежит в отдельной папке?</summary>
+        <label>
+          Путь к папке
+          <input
+            value={subdirectory}
+            placeholder="Например: homework"
+            onChange={(event) => setSubdirectory(event.target.value)}
+          />
+        </label>
+      </details>
+      <button className="primary" type="submit" disabled={submitting}>
+        {submitting ? "Отправляем…" : "Отправить на проверку"}
+      </button>
+    </form>
   );
 }
 
@@ -503,6 +511,19 @@ function ReviewDetail({
         Итоговые баллы и комментарии подтверждает ревьюер. Предложения системы можно изменить.
       </div>
 
+      {item.execution_check && (
+        <section className="execution-summary">
+          <div>
+            <p className="eyebrow">Проверка запуска</p>
+            <h2>Go {item.execution_check.go_version}</h2>
+          </div>
+          <div><span>Сборка</span><strong>{item.execution_check.tests_ok ? "Успешно" : "Ошибка"}</strong></div>
+          <div><span>go vet</span><strong>{item.execution_check.vet_ok ? "Успешно" : "Ошибка"}</strong></div>
+          <div><span>Тесты</span><strong>{item.execution_check.has_tests ? "Найдены" : "Нет в проекте"}</strong></div>
+          <div><span>Время</span><strong>{item.execution_check.duration_seconds?.toFixed(1)} с</strong></div>
+        </section>
+      )}
+
       {sections.map((section) => (
         <section className="criteria-section" key={section}>
           <h2>{section}</h2>
@@ -591,40 +612,62 @@ function StudentView({
   submissions,
   selected,
   onOpen,
+  onCreated,
   onError
 }: {
   submissions: Submission[];
   selected: Submission | null;
   onOpen: (id: number) => Promise<Submission>;
+  onCreated: (item: Submission) => Promise<void>;
   onError: (message: string) => void;
 }) {
-  const approved = submissions.filter((item) => item.status === "approved");
-  const item = selected?.status === "approved" ? selected : null;
+  const item = selected;
   return (
     <main className="student-page">
       <section className="page-heading">
         <div>
           <p className="eyebrow">Результаты студента</p>
           <h1>Что исправить и почему</h1>
-          <p>Здесь показывается только результат, подтверждённый ревьюером.</p>
+          <p>Отправьте ссылку на GitHub и следите за проверкой в одном месте.</p>
         </div>
+      </section>
+      <section className="surface student-submit">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Новая работа</p>
+            <h2>Отправить на проверку</h2>
+          </div>
+        </div>
+        <GitHubSubmissionForm onCreated={onCreated} onError={onError} />
       </section>
       <div className="student-grid">
         <aside className="surface student-list">
-          <h2>Проверенные работы</h2>
-          {approved.length === 0 && <p className="muted">Подтверждённых результатов пока нет.</p>}
-          {approved.map((submission) => (
+          <h2>Мои работы</h2>
+          {submissions.length === 0 && <p className="muted">Вы ещё ничего не отправляли.</p>}
+          {submissions.map((submission) => (
             <button type="button" key={submission.id} onClick={() => onOpen(submission.id).catch((error: Error) => onError(error.message))}>
               <strong>{submission.title}</strong>
-              <span>{submission.confirmed_points}/{submission.max_points}</span>
+              <StatusBadge status={submission.status} />
             </button>
           ))}
         </aside>
         <section className="surface student-result">
           {!item ? (
             <div className="empty-state tall">
-              <strong>Выберите проверенную работу</strong>
-              <span>Результат появится после подтверждения ревьюером.</span>
+              <strong>Выберите работу</strong>
+              <span>Здесь появятся статус и подтверждённый результат.</span>
+            </div>
+          ) : item.status !== "approved" ? (
+            <div className="student-progress">
+              <p className="eyebrow">Работа #{item.id}</p>
+              <h2>{item.title}</h2>
+              <StatusBadge status={item.status} />
+              <dl>
+                <div><dt>Ревьюер</dt><dd>{item.reviewer?.name ?? "Назначается"}</dd></div>
+                <div><dt>Срок проверки</dt><dd>{formatDate(item.due_at)}</dd></div>
+                <div><dt>Источник</dt><dd><a href={item.repository_url} target="_blank" rel="noreferrer">GitHub ↗</a></dd></div>
+              </dl>
+              <p className="muted">Итог появится здесь после подтверждения ревьюером.</p>
             </div>
           ) : (
             <>
